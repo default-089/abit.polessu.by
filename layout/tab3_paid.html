@@ -1,0 +1,85 @@
+<?php
+$educ_forms = R::getAll('SELECT educ_form_id, name  FROM ref_educ_forms' ); // получаем массив форм образования
+$faculties = R::getAll('SELECT faculty_id, name  FROM ref_faculties' ); // получаем массив факультетов  
+?>
+<div class="card">
+<div class="card-header">Вы можете выбрать несколько специальностей, находящихся в одной группе. Выберите специальности в порядке убывания интереса к специальности.</div>
+<div class="card-body">
+<div class="col-xl-7 col-lg-9"> 
+<div class="form-group row">
+  <label for="educForm" class="col-sm-4 text-right col-form-label">Форма обучения:</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="educForm_paid" name="educForm">
+            <option value=0></option>
+            <?php
+            foreach ($educ_forms as $value) {
+                if($value[educ_form_id] == $contests_row_paid[educ_form_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[educ_form_id]>$value[name]</option>";
+            }$selected = null;?>       
+        </select></div>
+</div>
+<div class="form-group row">
+	<label class="col-sm-4 text-right col-form-label">Уровень образования: </label>
+    <label id="edLevel_paid" class="col-sm-8 col-form-label"><strong><? if(isset($applicants[educ_level_id])){echo R::getCell( 'SELECT name FROM ref_educ_levels WHERE educ_level_id = ? LIMIT 1', array($applicants[educ_level_id]));}else{echo "Не выбран";}?></strong></label>
+    <input type="text" name="edLevel_paid" value="<? if(isset($applicants[educ_level_id])){echo $applicants[educ_level_id];}else{echo "0";}?>" hidden>
+</div>
+<div class="form-group row">
+  <label for="educPeriod_paid" class="col-sm-4 text-right col-form-label">Срок обучения:</label>
+    <div class="col-sm-8">
+    <select class="form-control" id="educPeriod_paid">
+        <option value=1>полный</option>
+        <option value=2 disabled>сокращенный</option>                   
+    </select>
+  </div>
+</div>
+<div class="form-group row">
+  	  	<label for="faculty" class="col-sm-4 text-right col-form-label">Факультет:</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="faculty_paid" name="faculty">
+            <option value=0></option>>
+            <?php
+            foreach ($faculties as $value) {
+                if($value[faculty_id] == $contests_row_paid[faculty_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[faculty_id]>$value[name]</option>";
+            }$selected = null;?>       
+        </select></div>
+</div>
+
+
+<div class="text-center">
+<button type="button" id="show_specialty_paid" class="btn btn-success my-3 btn-lg px-5"><?php if(isset($contest_paid[0][prio])){echo"Изменить";}else{echo"Показать специальности";}?></button>
+</div>
+</div>
+</div></div>
+
+<div id="info_speciality_paid" class="col-12 mt-3" <?if(!isset($contest_paid[0][prio])){echo 'style="display: none"';}?>>
+  <div class="form-group row mb-0">
+    <label style="font-size: 1.4rem;" class="col-md-2 col-auto text-center col-form-label"><b>Приоритет: </b></label>
+    <label style="font-size: 1.4rem;" class="col-auto pl-5 col-form-label"><b>Специальности: </b></label>
+  </div>
+</div>
+
+
+<div class="row" id="specialty_row_paid">
+<!-- сюда будут добавляться card блоки -->
+<?php
+for ($i=0; $i < count($contest_paid); $i++) {
+if(isset($contest_paid[$i][prio])){
+    echo '       
+<div class="col-12" id="specialty_paid_'.$contest_paid[$i][prio].'"> 
+    <div class="card">
+      <div class="card-body py-1">
+          <div class="form-group row mb-0">
+          <label style="font-size: 1.8rem;" class="col-2 text-center col-form-label">'.$contest_paid[$i][prio].'</label>
+            <input type="text" name="prio_paid_'.$contest_paid[$i][prio].'" value="'.$contest_paid[$i][prio].'" hidden>
+              <div class="col-10 align-self-center">
+              <label style="font-size: 1.8rem;" class="col-auto">'.R::getCell('SELECT name FROM ref_specialties WHERE specialty_id = ? LIMIT 1', array($contest_paid[$i][specialty_id])).'</label>
+              <input type="text" name="specialty_paid_'.$contest_paid[$i][prio].'" value="'.$contest_paid[$i][specialty_id].'" hidden>               
+              </div>
+          </div>
+      </div>
+    </div>
+  </div>';
+}}?>
+</div> 
+

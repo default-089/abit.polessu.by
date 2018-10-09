@@ -1,0 +1,35 @@
+<div class="row" id="specialty_row_free"> 
+<!-- сюда будут добавляться card блоки -->
+
+<?php
+
+if(isset($contest[0][prio])){
+  echo '
+<div id="info_speciality_paid" class="col-12 mt-3">
+  <div class="form-group row mb-0">
+    <label style="font-size: 1.4rem;" class="col-md-2 col-auto text-center col-form-label"><b>Приоритет: </b></label>
+    <label style="font-size: 1.4rem;" class="col-auto pl-5 col-form-label"><b>Специальности: </b></label>
+  </div>
+</div>';}else{
+  echo "<h3 class='pl-sm-4 m-5'>Специальности не выбраны</h3>";
+}
+
+for ($i=0; $i < count($contest); $i++) {
+if(isset($contest[$i][prio])){
+    echo '        
+<div class="col-12" id="specialty_free_'.$contest[$i][prio].'"> 
+    <div class="card">
+      <div class="card-body py-1">
+          <div class="form-group row mb-0">
+          <label style="font-size: 1.8rem;" class="col-2 text-center col-form-label">'.$contest[$i][prio].'</label>
+            <input type="text" name="prio_free_'.$contest[$i][prio].'" value="'.$contest[$i][prio].'" hidden>
+              <div class="col-10 align-self-center">
+                <label style="font-size: 1.8rem;" class="col-auto">'.R::getCell('SELECT name FROM ref_specialties WHERE specialty_id = ? LIMIT 1', array($contest[$i][specialty_id])).'</label>
+                <input type="text" name="specialty_free_'.$contest[$i][prio].'" value="'.$contest[$i][specialty_id].'" hidden>
+              </div>
+          </div>
+      </div>
+    </div>
+  </div>';
+}}?>   
+</div>

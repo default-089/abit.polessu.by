@@ -1,0 +1,383 @@
+<div class="row">
+      
+          <!--1. ФИО-->
+<div class="col-md-5">
+<div class="card">
+<?php
+    $fioErr = 0;
+    //для правильного отображения семейного положения 
+if($applicants[relationship] == "m" && $applicants[sex] == "m"){$applicants[relationship] = "женат";}
+  elseif($applicants[relationship] == "m" && $applicants[sex] == "f"){$applicants[relationship] = "замужем";}
+  elseif($applicants[relationship] == "f" && $applicants[sex] == "m"){$applicants[relationship] = "холост";}
+  elseif($applicants[relationship] == "f" && $applicants[sex] == "f"){$applicants[relationship] = "не замужем";}
+    else{$applicants[relationship] = "не выбран"; $fioErr++;}
+//для правильного отображения пола
+if($applicants[sex] == "m"){$applicants[sex] = "мужской";}
+  elseif($applicants[sex] == "f"){$applicants[sex] = "женский";}
+  else{$applicants[sex] = "не выбран"; $fioErr++;}
+
+if($fioErr == 0){echo '<div class="card-header yes"> ФИО</div>';
+}else{echo '<div class="card-header no"> ФИО</div>';}
+ echo ' 
+<div class="card-body">
+    <div class="text-center">На русском:</div><hr>
+    <div class="form-group row">
+      <label class="col-5 text-right">Фамилия</label>
+      <label class="col-7"><strong>'.$_SESSION['logged_user']->lastname.'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Имя</label>
+      <label class="col-7"><strong>'.$_SESSION['logged_user']->name.'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Отчество</label>
+      <label class="col-7"><strong>'.$_SESSION['logged_user']->middlename.'</strong></label>
+    </div>
+    <hr><div class="text-center">Па-беларуску:</div><hr>
+    <div class="form-group row">
+      <label class="col-5 text-right">Прозвішча</label>
+      <label class="col-7"><strong>'.$applicants[lastname_bel].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Імя</label>
+      <label class="col-7"><strong>'.$applicants[name_bel].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Імя па бацьку</label>
+      <label class="col-7"><strong>'.$applicants[middlename_bel].'</strong></label>
+    </div><hr>
+    <div class="form-group row">
+      <label class="col-5 text-right">Дата рождения</label>
+      <label class="col-7"><strong>'.$applicants[birth_date].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Пол</label>
+      <label class="col-7"><strong>'.$applicants[sex].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Семейное положение</label>
+      <label class="col-7"><strong>'.$applicants[relationship].'</strong></label>
+    </div>
+</div>';?>
+</div><br>
+</div>
+          
+<!--костыль для 2 divов в одном столбце-->
+<div class="row col-md-7 pr-0">
+
+<div class="col-md-12 pr-0">
+<div class="card">
+<?php
+  if(isset($applicants[ident_doc_type_id])){
+  echo '
+<div class="card-header yes"> Документ, удостоверяющий личность</div>
+<div class="card-body">
+    <div class="form-group row">
+      <label class="col-5 text-right">Тип документа</label>
+      <label class="col-7"><strong>'.R::getCell( 'SELECT name FROM ref_ident_doc_types WHERE ident_doc_type_id = ? LIMIT 1', array($applicants[ident_doc_type_id])).'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Идентификационный номер</label>
+      <label class="col-7"><strong>'.$applicants[ident_doc_ident_numb].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Номер</label>
+      <label class="col-7"><strong>'.$applicants[ident_doc_series].$applicants[ident_doc_numb].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Дата выдачи</label>
+      <label class="col-7"><strong>'.$applicants[ident_doc_issued_date].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Кем выдан</label>
+      <label class="col-7"><strong>'.$applicants[ident_doc_issued_by].'</strong></label>
+    </div>
+</div>';
+}else{ echo '
+<div class="card-header no"> Документ, удостоверяющий личность</div>
+<div class="card-body"></div>';
+}?>
+</div><br>
+  </div>
+
+  <!--3. Льготы при зачислении-->
+<?php
+  if(isset($applicants[privileges])){
+  echo '
+<div class="col-md-12 pr-0">
+    <div class="card">
+<div class="card-header yes"> Льготы при зачислении</div>
+<div class="card-body">
+    <div class="form-group row">
+      <label class="col-12"><strong>'.$applicants[privileges].'</strong></label>
+    </div>
+</div>
+    </div><br>
+</div>';
+}
+?>
+</div><!--конец костыля--> 
+
+
+          <!--4. Образование-->
+<div class="col-md-12">
+<div class="card">
+<?php
+  if(isset($applicants[educ_level_id])){
+    echo '<div class="card-header yes"> Образование</div>
+    <div class="card-body">';
+  }else{
+    echo '<div class="card-header no"> Образование</div>
+    <div class="card-body">';
+  }
+
+  if(isset($applicants[educ_level_id])){
+    echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Уровень</label>
+      <label class="col-7"><strong>'.R::getCell( 'SELECT name FROM ref_educ_levels WHERE educ_level_id = ? LIMIT 1', array($applicants[educ_level_id])).'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Учреждение</label>
+      <label class="col-7"><strong>'.R::getCell( 'SELECT name FROM ref_school_types WHERE school_type_id = ? LIMIT 1', array($applicants[school_type_id])).'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Документ</label>
+      <label class="col-7"><strong>'.R::getCell( 'SELECT name FROM ref_educ_doc_types WHERE educ_doc_type_id = ? LIMIT 1', array($applicants[educ_doc_type_id])).'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Номер учебного заведения или аббревиатура</label>
+      <label class="col-7"><strong>'.$applicants[educ_doc_issued_by].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Номер документа</label>
+      <label class="col-7"><strong>'.$applicants[educ_doc_numb].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Дата окончания</label>
+      <label class="col-7"><strong>'.$applicants[educ_doc_issued_date].'</strong></label>
+    </div>';}
+    if(isset($applicants[foreign_language])){
+      echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Иностранный язык</label>
+      <label class="col-7"><strong>'.$applicants[foreign_language].'</strong></label>
+    </div>';
+    }
+?>
+</div> <!-- card-body end -->
+</div><br>
+</div>
+
+          <!--5. Адреc-->
+<div class="col-md-6"> 
+<div class="card">
+<?php
+  if(isset($applicants[addr_country]) && isset($applicants[addr_settlement]) && isset($applicants[addr_street]) && isset($applicants[addr_street_nr])){
+    echo '<div class="card-header yes"> Адреc</div>
+    <div class="card-body">';
+  }else{
+    echo '<div class="card-header no"> Адреc</div>
+    <div class="card-body">';
+  }
+  if(isset($applicants[addr_postal_code])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Индекс</label>
+      <label class="col-7"><strong>'.$applicants[addr_postal_code].'</strong></label>
+    </div>';
+  }
+  if(isset($applicants[addr_country])){
+    echo '    
+    <div class="form-group row">
+      <label class="col-5 text-right">Страна</label>
+      <label class="col-7"><strong>'.$applicants[addr_country].'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_oblast])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Область</label>
+      <label class="col-7"><strong>'.$applicants[addr_oblast].'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_raion])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Район</label>
+      <label class="col-7"><strong>'.$applicants[addr_raion].'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_building])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Тип населенного пункта</label>
+      <label class="col-7"><strong>'.R::getCell( 'SELECT name FROM ref_settlement_types WHERE settlement_type_id = ? LIMIT 1', array($applicants[settlement_type_id])).'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_settlement])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Название населенного пункта</label>
+      <label class="col-7"><strong>'.$applicants[addr_settlement].'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_building])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Тип улицы</label>
+      <label class="col-7"><strong>'.R::getCell( 'SELECT name FROM ref_street_types WHERE street_type_id = ? LIMIT 1', array($applicants[street_type_id])).'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_street])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Название улицы</label>
+      <label class="col-7"><strong>'.$applicants[addr_street].'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_street_nr])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Номер дома</label>
+      <label class="col-7"><strong>'.$applicants[addr_street_nr].'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_building])){ echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Номер корпуса</label>
+      <label class="col-7"><strong>'.$applicants[addr_building].'</strong></label>
+    </div>';}
+  if(isset($applicants[addr_flat])){ echo '
+      <div class="form-group row">
+      <label class="col-5 text-right">Номер квартиры</label>
+      <label class="col-7"><strong>'.$applicants[addr_flat].'</strong></label>
+    </div>';}
+  if($applicants[need_hostel] == 1){ echo '<strong>Нуждаюсь в общежитии на время учебы</strong>';
+    }else{ echo '<strong>Не нуждаюсь в общежитии на время учебы</strong>';}
+?>
+</div> <!-- card-body end -->
+    </div><br>
+    </div>
+    
+<!--костыль для 2 divов в одном столбце-->
+<div class="row col-md-6 pr-0">
+          <!--6. Телефон и email-->     
+<div class="col-md-12 pr-0">
+    <div class="card">   
+<div class="card-header yes"> Телефон и email</div>
+<div class="card-body">
+<?php
+    if(isset($applicants[phone_code])){ echo '
+      <div class="form-group row">
+      <label class="col-5 text-right">Код города</label>
+      <label class="col-7"><strong>'.$applicants[phone_code].'</strong></label>
+    </div>';}
+    if(isset($applicants[phone_home])){ echo '
+      <div class="form-group row">
+      <label class="col-5 text-right">Дом. телефон</label>
+      <label class="col-7"><strong>'.$applicants[phone_home].'</strong></label>
+    </div>';}
+    echo '
+    <div class="form-group row">
+      <label class="col-5 text-right">Моб. телефон</label>
+      <label class="col-7"><strong>'.$applicants[phone_mobile].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-5 text-right">Эл. почта</label>
+      <label class="col-7"><strong>'.$_SESSION['logged_user']->email.'</strong></label>
+    </div>';
+?>
+</div>
+    </div><br>
+</div>
+ 
+          <!--7. Трудовая деятельность-->
+<?php
+//для правильного отображения дат
+if($applicants[occup_exp_full_y] == 1){$applicants[occup_exp_full_y] .= " год";}
+  elseif($applicants[occup_exp_full_y] > 1 && $applicants[occup_exp_full_y] < 5){$applicants[occup_exp_full_y] .= " года";}
+    else{$applicants[occup_exp_full_y] .= " лет";}
+
+if($applicants[occup_exp_full_m] == 1){$applicants[occup_exp_full_m] .= " месяц";}
+  elseif($applicants[occup_exp_full_m] > 1 && $applicants[occup_exp_full_m] < 5){$applicants[occup_exp_full_m] .= " месяца";}
+    else{$applicants[occup_exp_full_m] .= " месяцев";}
+
+if($applicants[occup_exp_pro_y] == 1){$applicants[occup_exp_pro_y] .= " год";}
+  elseif($applicants[occup_exp_pro_y] > 1 && $applicants[occup_exp_pro_y] < 5){$applicants[occup_exp_pro_y] .= " года";}
+    else{$applicants[occup_exp_pro_y] .= " лет";}
+
+if($applicants[occup_exp_pro_m] == 1){$applicants[occup_exp_pro_m] .= " месяц";}
+  elseif($applicants[occup_exp_pro_m] > 1 && $applicants[occup_exp_pro_m] < 5){$applicants[occup_exp_pro_m] .= " месяца";}
+    else{$applicants[occup_exp_pro_m] .= " месяцев";}
+
+  if(isset($applicants[occup_doc_type_id])){
+  echo '
+<div class="col-md-12 pr-0">
+    <div class="card">
+<div class="card-header yes"> Трудовая деятельность</div>
+<div class="card-body">
+    <div class="form-group row">
+      <label class="col-5 text-right">Тип документа</label>
+      <label class="col-7"><strong>'.R::getCell( 'SELECT name FROM ref_occup_doc_types WHERE occup_doc_type_id = ? LIMIT 1', array($applicants[occup_doc_type_id])).'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-12">Место работы и должность:</label>
+      <label class="col-12"><strong>'.$applicants[occup_job].'</strong></label>
+    </div>
+    <div class="form-group row">
+      <label class="col-auto">Стаж (общий):</label>
+      <strong>'.$applicants[occup_exp_full_y].',&nbsp;</strong>
+      <strong>'.$applicants[occup_exp_full_m].'</strong>
+    </div>
+    <div class="form-group row">
+      <label class="col-auto">По специальности:</label>
+      <strong>'.$applicants[occup_exp_pro_y].',&nbsp;</strong>
+      <strong>'.$applicants[occup_exp_pro_m].'</strong>
+    </div>
+
+</div>
+    </div><br>
+</div>';
+}
+?>
+</div><!--конец костыля--> 
+          <!--8. Родители-->
+<div class="col-md-12">
+    <p> Родители</p>
+    <div class="row">
+<?php
+for ($i=0; $i < 2; $i++) { 
+  if(isset($parents[$i][type])){
+  if($parents[$i][address] == "Same"){$parents[$i][address] = 'такой же как у абитуриента';}
+  echo '
+  <div class="col-md-6">
+    <div class="card">
+<div class="card-header yes">'.' '.$parents[$i][type].'</div>
+<div class="card-body">
+    <div class="form-group row">
+        <label class="col-4 text-right">Фамилия</label>
+        <label class="col-8"><strong>'.$parents[$i][lastname].'</strong></label>
+    </div>
+    <div class="form-group row">
+        <label class="col-4 text-right">Имя</label>
+        <label class="col-8"><strong>'.$parents[$i][name].'</strong></label>
+    </div>
+    <div class="form-group row">
+        <label class="col-4 text-right">Отчество</label>
+        <label class="col-8"><strong>'.$parents[$i][middlename].'</strong></label>
+    </div>
+
+    <div class="form-group row">
+        <label class="col-4 text-right">Адрес</label>
+        <label class="col-8"><strong>'.$parents[$i][address].'</strong></label>
+    </div>
+    <div class="form-group row">
+        <label class="col-4 text-right">Место работы и должность</label>
+        <label class="col-8"><strong>'.$parents[$i][work_place].'</strong></label>
+    </div>   
+</div>
+    </div><br>
+    </div>';
+}}
+?>
+
+    </div>
+</div>
+  
+
+</div> <!-- end row-->
+      
+        
+        
+<style type="text/css">
+  .form-group{margin-bottom: 0.15rem;}
+</style>
+
+
+
+  

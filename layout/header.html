@@ -1,0 +1,31 @@
+<?php
+require __DIR__.'/../libs/db.php';
+?>
+<!doctype html>
+<title>Автоматизированная система подачи заявлений и зачисления</title>
+<link rel="stylesheet" type="text/css" href="../css/bootstrap.min.css"/>
+<link rel="stylesheet" type="text/css" href="../css/StyleSheet.css"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<script src="../js/jquery-3.3.1.min.js"></script>
+<script src="../js/bootstrap.bundle.min.js"></script>
+<script src="../js/jquery.maskedinput.min.js"></script>  
+<!--js файл в конце футера -->
+<nav class="navbar navbar-expand-lg navbar-dark bg-dark text-white">
+  <a class="navbar-brand" href="../index.php"><img src="../images/icon.png" width="40" height="40" alt=""></a>
+  <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarSupportedContent" aria-controls="navbarSupportedContent" aria-expanded="false" aria-label="Toggle navigation">
+    <span class="navbar-toggler-icon"></span>
+  </button>
+
+  <div class="collapse navbar-collapse" id="navbarSupportedContent">
+    <ul class="navbar-nav mr-auto">
+      <li class="nav-item active">
+        <a class="nav-link" href="../index.php">Автоматизированная система подачи заявлений и зачисления</a>
+      </li>
+    </ul>
+       <?php if(isset($_SESSION['logged_user'])): ?>
+       <span class="navbar-text">Добро пожаловать, <b><?php echo $_SESSION['logged_user']->name;?> <?php echo $_SESSION['logged_user']->middlename;?>!</b></span>
+       <a class="nav-link text-white" href="/../actions/logout.php">Выйти</a>
+       <?php else : ?>
+       <?php endif; ?>
+  </div>
+</nav>

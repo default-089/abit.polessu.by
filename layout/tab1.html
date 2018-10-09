@@ -1,0 +1,575 @@
+<?php
+$doctype = R::getAll('SELECT ident_doc_type_id, name  FROM ref_ident_doc_types' ); // получаем массив типов документов
+$lingo = R::getAll('SELECT name  FROM ref_foreign_languages' );
+$level = R::getAll('SELECT *  FROM ref_educ_levels' );
+$countries = R::getAll('SELECT name FROM ref_countries' );
+$oblasts = R::getAll('SELECT name FROM ref_BLR_oblasts' );
+$settletype = R::getAll('SELECT settlement_type_id, name FROM ref_settlement_types' );
+$streettype = R::getAll('SELECT street_type_id, name FROM ref_street_types' ); 
+$occuptype = R::getAll('SELECT occup_doc_type_id, name  FROM ref_occup_doc_types' );
+
+
+
+//echo "ошибки: {не null: addrPostalCode, addr_building, addr_flat, privileges, addr_postal_code, phone_*} , ...";  
+?>
+
+<div class="row">
+          
+          <!--1. ФИО-->
+<div class="col-lg-5">
+              <div class="card">
+<div class="card-header">1. ФИО</div>
+<div class="card-body">
+    <div class="text-center">На русском:</div><hr>
+    <div class="form-group row">
+  	  	<label for="lastname" class="col-sm-5 text-right col-form-label">Фамилия</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr textrus" id="lastname" name="lastname" value="<?echo $_SESSION[logged_user]->lastname?>" data-toggle="tooltip" data-placement="right" title="Ваша фамилия на русском языке, как она указана в вашем документе, удостоверяющем личность.">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="name" class="col-sm-5 text-right col-form-label">Имя</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr textrus" id="name" name="name" value="<?echo $_SESSION[logged_user]->name?>" data-toggle="tooltip" data-placement="right" title="Ваше имя на русском языке, как оно указано в вашем документе, удостоверяющем личность.">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="middlename" class="col-sm-5 text-right col-form-label">Отчество</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr textrus" id="middlename" name="middlename" value="<?echo $_SESSION[logged_user]->middlename?>" data-toggle="tooltip" data-placement="right" title="Ваше отчество на русском языке, как оно указано в вашем документе, удостоверяющем личность.">
+    </div>
+    </div>
+    <hr><div class="text-center">Па-беларуску:</div><hr>
+    <div class="form-group row">
+  	  	<label for="lastnameB" class="col-sm-5 text-right col-form-label">Прозвішча</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr" id="lastnameB" name="lastnameB" value="<?echo $applicants[lastname_bel]?>" data-toggle = "tooltip" data-placement = "right" title = "Ваша прозвішча на беларускай мове, як яно паказана ў вашым дакуменце, які сведчыць асобу.">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="nameB" class="col-sm-5 text-right col-form-label">Імя</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr" id="nameB" name="nameB" value="<?echo $applicants[name_bel]?>" data-toggle = "tooltip" data-placement = "right" title = "Ваша імя на беларускай мове, як яно паказана ў вашым дакуменце, які сведчыць асобу.">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="middlenameB" class="col-sm-5 text-right col-form-label">Імя па бацьку</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr" id="middlenameB" name="middlenameB" value="<?echo $applicants[middlename_bel]?>" data-toggle = "tooltip" data-placement = "right" title = "Ваша імя па бацьку на беларускай мове, як яно паказана ў вашым дакуменце, які сведчыць асобу.">
+    </div>
+    </div><hr>
+    <div class="form-group row">
+  	  	<label for="dob" class="col-sm-5 text-right col-form-label">Дата рождения</label>
+    <div class="col-sm-7">
+        <input type="date" class="form-control CheckErr" id="dob" name="dob" value="<?echo $applicants[birth_date]?>" data-toggle = "tooltip" data-placement = "right" title = "Например, 05.04.2006">
+    </div>
+    </div>
+    <div class="form-group">
+    <div class="row">
+      <legend class="col-form-label text-right col-5 pt-0">Пол</legend>
+      <div class="col-7">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="Sex" id="Sex1" value="m" <? if($applicants[sex] == "m")echo"checked";?> >
+          <label class="form-check-label" for="Sex1">
+            Мужской
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="Sex" id="Sex2" value="f" <? if($applicants[sex] == "f")echo"checked";?> >
+          <label class="form-check-label" for="Sex2">
+            Женский
+          </label>
+        </div>
+
+      </div>
+    </div>
+</div>
+    <div class="form-group">
+    <div class="row">
+      <legend class="col-form-label text-right col-5 pt-0">Семейное положение</legend>
+      <div class="col-7">
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="StatusF" id="StatusF1" value="f" <? if($applicants[relationship] == "f")echo"checked";?> > <!-- f - free -->
+          <label class="form-check-label" for="StatusF1">
+            Холост/Не замужем
+          </label>
+        </div>
+        <div class="form-check">
+          <input class="form-check-input" type="radio" name="StatusF" id="StatusF2" value="m" <? if($applicants[relationship] == "m")echo"checked";?> > <!-- m - married -->
+          <label class="form-check-label" for="StatusF2">
+            Женат/Замужем
+          </label>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</div><br>
+          </div>
+          
+          <!--костыль для 2 divов в одном столбце-->
+<div class="row col-lg-7 pr-0">
+          <!--2. Документ, удостоверяющий личность					дописать проверкаи и подсказки-->  
+<div class="col-lg-12 pr-0">
+              <div class="card">
+<div class="card-header">2. Документ, удостоверяющий личность</div>
+<div class="card-body">
+    <div class="form-group row">
+  	  	<label for="DocsType" class="col-sm-4 text-right col-form-label">Тип документа</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="DocsType" name="DocsType">
+            <option value=0></option>
+            <?php
+            foreach ($doctype as $value) {
+              if($value[ident_doc_type_id] == $applicants[ident_doc_type_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[ident_doc_type_id]>$value[name]</option>";
+            }$selected = null;?>      
+        </select></div>
+    </div>
+<fieldset id="IdentDocsFieldset" <?php if(isset($applicants[ident_doc_type_id])){}else{echo"disabled";}?>>
+    <div class="form-group row">
+  	 <label for="DocsID" class="col-sm-4 text-right col-form-label">Идентификационный номер</label>
+    <div class="col-sm-8">
+    <input type="text" class="form-control" id="DocsID" name="DocsID" value="<?echo $applicants[ident_doc_ident_numb]?>" data-toggle="tooltip" data-placement="left" title="Указан на последней странице Вашего документа, поле 'Identification No'. Например, 1234567T890TT0">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="DocsSeries" class="col-sm-4 text-right col-form-label">Серия</label>
+    <div class="col-sm-8">
+    <input type="text" class="form-control" id="DocsSeries" name="DocsSeries" value="<?echo $applicants[ident_doc_series]?>" data-toggle="tooltip" data-placement="left" title="Указана на последней странице Вашего документа, первые две буквы поля 'Passport No'. Например, AA">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="docsNumb" class="col-sm-4 text-right col-form-label">Номер</label>
+    <div class="col-sm-8">
+    <input type="text" class="form-control textnumb" id="docsNumb" name="docsNumb" value="<?echo $applicants[ident_doc_numb]?>" data-toggle="tooltip" data-placement="left" title="Указан на последней странице Вашего документа, цифры в поле 'Passport No'. Например, 1234567">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="DocsData" class="col-sm-4 text-right col-form-label">Дата выдачи</label>
+    <div class="col-sm-8">
+    <input type="date" class="form-control" id="DocsData" name="DocsData" value="<?echo $applicants[ident_doc_issued_date]?>" data-toggle="tooltip" data-placement="left" title="Например, 05.04.2006">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="DocsIssued" class="col-sm-4 text-right col-form-label">Кем выдан</label>
+    <div class="col-sm-8">
+    <input type="text" class="form-control text_rus_numb" id="DocsIssued" name="DocsIssued" value="<?echo $applicants[ident_doc_issued_by]?>" data-toggle="tooltip" data-placement="left" title="Указано на предпоследнем развороте документа (стр.31 паспорта), поле 'Орган, выдавший паспорт'. Например, Пинский ГОВД Брестской области">
+    </div>
+    </div>
+</fieldset>
+</div>
+</div><br>
+          </div>
+
+
+          <!--3. Льготы при зачислении-->
+<div class="col-lg-12 pr-0">
+    <div class="card">
+<div class="card-header">3. Льготы при зачислении</div>
+<div class="card-body">
+    <div class="form-group row">
+    <div class="col-12">
+        <textarea rows="4" class="form-control text_rus_numb" id="Privileges" name="Privileges" data-toggle="tooltip" data-placement="top" title="ГЛАВА 4. Правил приема. Например, победитель республиканской олимпиады по физике"><?echo $applicants[privileges]?></textarea>
+    </div>
+    </div>
+</div>
+    </div><br>
+</div>
+</div><!--конец костыля--> 
+
+
+          <!--4. Образование-->
+<div class="col-lg-12">
+    <div class="card">
+<div class="card-header">4. Образование</div>
+<div class="card-body">
+    <div class="form-group row">
+  	  	<label for="level" class="col-sm-4 text-right col-form-label">Уровень</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="level" name="level">
+            <option value=0></option>
+            <?php
+            foreach ($level as $value) {
+              if($value[educ_level_id] == $applicants[educ_level_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[educ_level_id]>$value[name]</option>";
+            }$selected = null;?>
+        </select></div>
+    </div>
+<fieldset id="EducFieldset" <?php if(isset($applicants[educ_level_id])){}else{echo"disabled";}?>>
+    <div class="form-group row">
+  	  	<label for="institution" class="col-sm-4 text-right col-form-label">Учреждение</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="institution" name="institution">
+            <option value=0></option>
+            <?php if(isset($applicants[educ_level_id])){ //усли запись в бд существует загружаем все значения и выбираем то что есть в бд
+              $school_types = R::getAll('SELECT school_type_id, name FROM ref_school_types WHERE educ_level_id = ?', array($applicants[educ_level_id]));
+              foreach ($school_types as $value) {
+              if($value[school_type_id] == $applicants[school_type_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[school_type_id]>$value[name]</option>";
+            }$selected = null;}?>
+        </select></div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="docsLevel" class="col-sm-4 text-right col-form-label">Документ</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="docsLevel" name="docsLevel">
+            <option value=0></option>
+            <?php if(isset($applicants[educ_doc_type_id])){ //усли запись в бд существует загружаем все значения и выбираем то что есть в бд
+              $educ_doc_types = R::getAll('SELECT educ_doc_type_id, name  FROM ref_educ_doc_types WHERE educ_level_id = ?', array($applicants['educ_level_id']));
+              foreach ($educ_doc_types as $value) {
+              if($value[educ_doc_type_id] == $applicants[educ_doc_type_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[educ_doc_type_id]>$value[name]</option>";
+            }$selected = null;}?>
+        </select></div>
+    </div>
+    <div class="form-group row">
+  	 <label for="InstNumb" class="col-sm-4 text-right col-form-label">Номер учебного заведения или аббревиатура</label>
+    <div class="col-sm-8">
+    <input type="text" class="form-control text_rus_numb" id="InstNumb" name="InstNumb" value="<?echo "$applicants[educ_doc_issued_by]"?>" data-toggle="tooltip" data-placement="top" title="Например, УО МГВРК или СШ№15 г.Пинска">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="InstDocsNumb" class="col-sm-4 text-right col-form-label">Номер документа</label>
+    <div class="col-sm-8">
+    <input type="text" class="form-control textnumb" id="InstDocsNumb" name="InstDocsNumb" value="<?echo "$applicants[educ_doc_numb]"?>" data-toggle="tooltip" data-placement="top" title="Указан в поле '№' документа на последней странице. Например, 1234567">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="DateEnd" class="col-sm-4 text-right col-form-label">Дата окончания</label>
+    <div class="col-sm-8">
+    <input type="date" class="form-control" id="DateEnd" name="DateEnd" value="<?echo "$applicants[educ_doc_issued_date]"?>" data-toggle="tooltip" data-placement="top" title="Например, 05.04.2006">
+    </div>
+    </div>
+</fieldset>
+    <div class="form-group row">
+  	 <label for="Lingo" class="col-sm-4 text-right col-form-label">Иностранный язык</label>
+    <div class="col-sm-8">
+    <input type="text" class="form-control" id="Lingo" name="Lingo" list="foreignl" value="<?echo $applicants[foreign_language]?>">
+      <datalist id="foreignl">
+        <?php
+            foreach ($lingo as $value) {
+            echo "<option value=$value[name]>";
+        }?>
+      </datalist>
+    </div>
+    </div>   
+</div>
+    </div><br>
+</div>
+
+          <!--5. Адреc-->
+<div class="col-lg-6"> 
+              <div class="card">
+<div class="card-header">5. Адреc</div>
+<div class="card-body">
+    <div class="form-group row">
+  	 <label for="PostalCode" class="col-sm-5 text-right col-form-label">Индекс</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control textnumb" id="PostalCode" name="PostalCode" value="<?echo $applicants[addr_postal_code]?>" maxlength="10" data-toggle="tooltip" data-placement="right" title="Например, 225707">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="Country" class="col-sm-5 text-right col-form-label">Страна</label>
+    <div class="col-sm-7">
+      <input type="text" class="form-control textrus" id="Country" name="Country" value="<?echo $applicants[addr_country];?>" autocomplete="off" list="CountryList" data-toggle="tooltip" data-placement="right" title="Укажите страну либо выберите из списка.">
+      <datalist id="CountryList">
+        <?php
+            foreach ($countries as $value) {
+            echo "<option value='$value[name]'>";
+        }?>
+      </datalist>
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="Oblast" class="col-sm-5 text-right col-form-label">Область</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control textrus" id="Oblast" name="Oblast" value="<?echo $applicants[addr_oblast];?>" <?if(isset($applicants[addr_oblast])){}else{echo" disabled";}?> autocomplete="off" list="OblastList" data-toggle="tooltip" data-placement="right" title="Если необходимо, укажите область либо выберите из списка.">
+      <datalist id="OblastList">
+        <?php
+            foreach ($oblasts as $value) {
+            echo "<option value=$value[name]>";
+        }?>
+      </datalist>
+    </div>
+    </div>
+    <fieldset id="regiondis" <?if(isset($applicants[addr_oblast])){}else{echo" disabled";}?>>
+    <div class="form-group row">
+  	 <label for="District" class="col-sm-5 text-right col-form-label">Район</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control text_rus_numb" id="District" name="District" value="<?echo $applicants[addr_raion]?>" autocomplete="off" list="DistrictList" data-toggle="tooltip" data-placement="right" title="Если необходимо, укажите район.">
+    <datalist id="DistrictList">
+      </datalist>
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="TypeLocal" class="col-sm-5 text-right col-form-label">Тип населенного пункта</label>
+    <div class="col-sm-7">
+    <select class="form-control" id="TypeLocal" name="TypeLocal">
+            <option value=0></option>
+            <?php
+            foreach ($settletype as $value) {
+              if($value[settlement_type_id] == $applicants[settlement_type_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[settlement_type_id]>$value[name]</option>";
+            }$selected = null;?>       
+        </select></div>
+    </div>
+    <div class="form-group row">
+  	 <label for="NameLocal" class="col-sm-5 text-right col-form-label">Название населенного пункта</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control text_rus_numb" id="NameLocal" name="NameLocal" value="<?echo $applicants[addr_settlement]?>" list="NameLocalList" data-toggle="tooltip" data-placement="right" title="Например, Пинск">
+        <datalist id="NameLocalList">
+      </datalist>
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="TypeStreet" class="col-sm-5 text-right col-form-label">Тип улицы</label>
+    <div class="col-sm-7">
+          <select class="form-control" id="TypeStreet" name="TypeStreet">
+            <option value=0></option>
+            <?php
+            foreach ($streettype as $value) {
+              if($value[street_type_id] == $applicants[street_type_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[street_type_id]>$value[name]</option>";
+            }$selected = null;?>       
+        </select>
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="NameStreet" class="col-sm-5 text-right col-form-label">Название улицы</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control text_rus_numb" id="NameStreet" name="NameStreet" value="<?echo $applicants[addr_street]?>" data-toggle="tooltip" data-placement="right" title="Например, Островского">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="addrStreetNr" class="col-sm-5 text-right col-form-label">Номер дома</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control text_rus_numb" id="addrStreetNr" name="addrStreetNr" value="<?echo $applicants[addr_street_nr]?>" data-toggle="tooltip" data-placement="right" title="Например, 120">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="addrBuilding" class="col-sm-5 text-right col-form-label">Номер корпуса</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control text_rus_numb" id="addrBuilding" name="addrBuilding" value="<?echo $applicants[addr_building]?>" data-toggle="tooltip" data-placement="right" title="Например, А или 2">
+    </div>
+    </div>
+    <div class="form-group row">
+  	 <label for="addrFlat" class="col-sm-5 text-right col-form-label">Номер квартиры</label>
+    <div class="col-sm-7">
+    <input type="text" class="form-control textnumb" id="addrFlat" name="addrFlat" value="<?echo $applicants[addr_flat]?>" data-toggle="tooltip" data-placement="right" title="Например, 84">
+    </div>
+    </div>
+    </fieldset>
+    <div class="form-group row">
+    <div class="col">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="HostelCheck" name="HostelCheck" <? if($applicants[need_hostel] == 1)echo"checked";?>>
+        <label class="form-check-label" for="HostelCheck">Нуждаюсь в общежитии на время учебы</label>
+      </div>
+    </div>
+    </div>
+                  </div>
+    </div><br>
+    </div>
+    
+<!--костыль для 2 divов в одном столбце-->
+<div class="row col-lg-6 pr-0">
+          <!--6. Телефон и email-->     
+<div class="col-lg-12 pr-0">
+    <div class="card">   
+<div class="card-header">6. Телефон и email</div>
+<div class="card-body"> 
+    <div class="form-group row">
+  	  	<label for="KodNumber" class="col-sm-5 text-right col-form-label">Код города</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr" id="KodNumber" name="KodNumber" value="<?echo $applicants[phone_code]?>" data-toggle="tooltip" data-placement="right" title="Например, 165">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="HomeNumber" class="col-sm-5 text-right col-form-label">Дом. телефон</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr" id="HomeNumber" name="HomeNumber" value="<?echo $applicants[phone_home]?>" data-toggle="tooltip" data-placement="right" title="Например, 123-45-67">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="MobNumber" class="col-sm-5 text-right col-form-label">Моб. телефон</label>
+    <div class="col-sm-7">
+        <input type="text" class="form-control CheckErr" id="MobNumber" name="MobNumber" value="<?echo $applicants[phone_mobile]?>" data-toggle="tooltip" data-placement="right" title="Например, +375 (33) 123-45-67">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<span class="col-sm-5 text-right ">Эл. почта</span>
+    <div class="col-sm-7">
+      <strong><?php echo $_SESSION['logged_user']->email;?></strong>
+    </div>
+    </div>
+</div>
+    </div><br>
+</div>
+ 
+          <!--7. Трудовая деятельность-->
+<div class="col-lg-12 pr-0">
+    <div class="card">
+<div class="card-header">7. Трудовая деятельность</div>
+<div class="card-body">
+  <div class="form-group row">
+        <label for="OccupType" class="col-sm-auto px-4 col-form-label">Тип документа</label>
+    <div class="col-sm">
+        <select class="form-control" id="OccupType" name="OccupType">
+            <option value=0></option>
+            <?php
+            foreach ($occuptype as $value) {
+              if($value[occup_doc_type_id] == $applicants[occup_doc_type_id]){$selected = "selected";}else{$selected = null;}
+            echo "<option ".$selected." value=$value[occup_doc_type_id]>$value[name]</option>";
+            }$selected = null;?>       
+        </select></div>
+    </div>
+<fieldset id="occup" <?php if(isset($applicants[occup_doc_type_id])){}else{echo"disabled";}?>>
+    <div class="form-group row pt-3">
+  	  	<label for="WorkPlace" class="col-sm-12 col-form-label pl-4">Место работы и должность:</label>
+    <div class="col-sm-12">
+        <textarea class="form-control text_rus_numb" id="WorkPlace" name="WorkPlace" data-toggle="tooltip" data-placement="right" title='Пример: ЗАО "Компания", бухгалтер'><?echo $applicants[occup_job]?></textarea>
+    </div>
+    </div>
+ 	<label for="WorkExp" class="col-sm-12 col-form-label">Стаж (общий):</label>
+    <input type="text" class="form-control col-2" id="WorkExp1" name="WorkExp1" value="<?echo $applicants[occup_exp_full_y]?>" style="display: inline-block">&nbsp;лет
+    <input type="text" class="form-control col-2" id="WorkExp2" name="WorkExp2" value="<?echo $applicants[occup_exp_full_m]?>" style="display: inline-block">&nbsp;месяцев,
+  <label for="WorkExpPro" class="col-sm-12 col-form-label">в том числе по профилю избранной специальности:</label>
+    <input type="text" class="form-control col-2" id="WorkExpPro1" name="WorkExpPro1" value="<?echo $applicants[occup_exp_pro_y]?>" style="display: inline-block">&nbsp;лет
+    <input type="text" class="form-control col-2" id="WorkExpPro2" name="WorkExpPro2" value="<?echo $applicants[occup_exp_pro_m]?>" style="display: inline-block">&nbsp;месяцев.
+</fieldset>   
+</div>
+    </div><br>
+</div>
+</div><!--конец костыля--> 
+          <!--8. Родители-->
+<div class="col-lg-12">
+    <p>8. Родители</p>
+    <div class="row">
+    <div class="col-lg-6">
+    <div class="card">
+<div class="card-header">Отец</div>
+<div class="card-body">
+    <div class="form-group row">
+  	  	<label for="TypeF" class="col-sm-4 text-right col-form-label">Тип родства</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="TypeF" name="TypeF">
+            <option value="0"></option>
+            <option <? if($parent_f[type] == "отец")echo"selected"?> value="отец">отец</option>
+            <option <? if($parent_f[type] == "отчим")echo"selected"?> value="отчим">отчим</option>
+            <option <? if($parent_f[type] == "попечитель")echo"selected"?> value="попечитель">попечитель</option>
+        </select></div>
+    </div>
+<fieldset id="FatherFieldset" <?php if(isset($parent_f[type])){}else{echo"disabled";}?>> 
+    <div class="form-group row">
+  	  	<label for="lastnameF" class="col-sm-4 text-right col-form-label">Фамилия</label>
+    <div class="col-sm-8">
+        <input type="text" class="form-control textrus" id="lastnameF" name="lastnameF" value="<?echo $parent_f[lastname]?>">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="nameF" class="col-sm-4 text-right col-form-label">Имя</label>
+    <div class="col-sm-8">
+        <input type="text" class="form-control textrus" id="nameF" name="nameF" value="<?echo $parent_f[name]?>">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="middlenameF" class="col-sm-4 text-right col-form-label">Отчество</label>
+    <div class="col-sm-8">
+        <input type="text" class="form-control" id="middlenameF textrus" name="middlenameF" value="<?echo $parent_f[middlename]?>">
+    </div>
+    </div>
+    <div class="form-group row">
+    <div class="col-4 text-right">Адрес</div>
+    <div class="col-8">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="AddressF" name="AddressF" <? if($parent_f[address] == "Same")echo"checked";?> >
+        <label class="form-check-label" for="AddressF">такой же, как у абитуриента</label>
+      </div>
+    </div>
+    </div>
+    <div class="form-group row justify-content-end">
+    <div class="col-sm-8 ">
+        <textarea class="form-control text_rus_numb" id="AddressAreaF" name="AddressAreaF" rows="4" <? if($parent_f[address] == "Same")echo"disabled";?>><? if($parent_f[address] != "Same")echo $parent_f[address];?></textarea>
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="WorkPlaceF" class="col-sm-4 text-right col-form-label">Место работы и должность</label>
+    <div class="col-sm-8">
+        <textarea class="form-control text_rus_numb" id="WorkPlaceF" name="WorkPlaceF"><?echo $parent_f[work_place]?></textarea>
+    </div>
+    </div>
+</fieldset>   
+</div>
+    </div><br>
+    </div>
+    <div class="col-lg-6">
+        <div class="card">
+<div class="card-header">Мать</div>
+<div class="card-body">
+    <div class="form-group row">
+  	  	<label for="TypeM" class="col-sm-4 text-right col-form-label">Тип родства</label>
+    <div class="col-sm-8">
+        <select class="form-control" id="TypeM" name="TypeM">
+            <option value="0"></option>
+            <option <? if($parent_m[type] == "мать")echo"selected"?> value="мать">мать</option>
+            <option <? if($parent_m[type] == "мачеха")echo"selected"?> value="мачеха">мачеха</option>
+            <option <? if($parent_m[type] == "попечительница")echo"selected"?> value="попечительница">попечительница</option>
+        </select></div>
+    </div>
+<fieldset id="MotherFieldset" <?php if(isset($parent_m[type])){}else{echo"disabled";}?>> 
+    <div class="form-group row">
+  	  	<label for="lastnameM" class="col-sm-4 text-right col-form-label">Фамилия</label>
+    <div class="col-sm-8">
+        <input type="text" class="form-control textrus" id="lastnameM" name="lastnameM" value="<?echo $parent_m[lastname]?>">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="nameM" class="col-sm-4 text-right col-form-label">Имя</label>
+    <div class="col-sm-8">
+        <input type="text" class="form-control textrus" id="nameM" name="nameM" value="<?echo $parent_m[name]?>">
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="middlenameM" class="col-sm-4 text-right col-form-label">Отчество</label>
+    <div class="col-sm-8">
+        <input type="text" class="form-control textrus" id="middlenameM" name="middlenameM" value="<?echo $parent_m[middlename]?>">
+    </div>
+    </div>
+    <div class="form-group row">
+    <div class="col-4 text-right">Адрес</div>
+    <div class="col-8">
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="AddressM" name="AddressM" <? if($parent_m[address] == "Same")echo"checked";?>>
+        <label class="form-check-label" for="AddressM">такой же, как у абитуриента</label>
+      </div>
+    </div>
+    </div>
+    <div class="form-group row justify-content-end">
+    <div class="col-sm-8 ">
+        <textarea class="form-control text_rus_numb" id="AddressAreaM" name="AddressAreaM" rows="4" <? if($parent_m[address] == "Same")echo"disabled";?>><? if($parent_m[address] != "Same")echo $parent_m[address];?></textarea>
+    </div>
+    </div>
+    <div class="form-group row">
+  	  	<label for="WorkPlaceM" class="col-sm-4 text-right col-form-label">Место работы и должность</label>
+    <div class="col-sm-8">
+        <textarea class="form-control text_rus_numb" id="WorkPlaceM" name="WorkPlaceM"><?echo $parent_m[work_place]?></textarea>
+    </div>
+    </div>
+</fieldset> 
+</div>
+</div>
+    </div>
+    </div>
+</div>
+  
+
+</div> <!-- end row-->
+      
+        
+        
+
+
+
+
+  

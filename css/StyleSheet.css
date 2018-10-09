@@ -1,0 +1,43 @@
+#main{
+    padding-left: 5%;
+    padding-right: 5%;
+}
+
+.form-group{
+    margin-bottom: 0.6rem;
+}
+
+hr{
+    margin-top: 0.2rem;
+    margin-bottom: 0.4rem;
+}
+
+/*всплывающие подсказки*/
+.tooltip .tooltip-inner {background-color: green;}
+.tooltip .arrow {display: none;}
+
+/*для прижатия футера*/
+.wrap {display: flex; flex-direction: column; height: 100%;}
+.content {flex-grow: 1; flex-shrink: 0; flex-basis: auto;}
+.footer {flex-grow: 0; flex-shrink: 0; flex-basis: auto;}
+
+/*правила для пароля*/
+div.rules{font-size: 0.82rem;}
+.yes:before{content: '\2713';color:green;} .yes{color:green;}
+.no:before{content: '\2718';color:red;} .no{color:red;}
+li.rules {list-style-type: none;}
+ul.rules {margin-left: 0; padding-left: 0;}
+
+
+/* Экстрамалые девайсы («телефоны», < 576px) */ 
+@media (max-width: 575.98px) {
+	.text-right{text-align: left!important;} /*класс выравнивание по правой стороне меняю на выравнивание по левой, бред короче */
+}
+
+#loader {
+  position:fixed; display:none;
+  top:0; left:0;
+  height:100%; width:100%;
+  background:#ccc; opacity:.9;
+}
+#loader img{display:block; position:absolute;}
