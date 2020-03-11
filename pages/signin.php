@@ -1,6 +1,6 @@
 <div class="wrap">
     <div class="content">
-        <?php include "../layout/header.html"; ?>
+        <?php include_once "../layout/header.html"; ?>
         
 <?php if(isset($_SESSION['logged_user'])): ?>
 <?php
