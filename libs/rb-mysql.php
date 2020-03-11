@@ -193,12 +193,17 @@ class Debug extends RDefault implements Logger
 	/**
 	 * @var integer
 	 */
-	private $strLen = 40;
+	protected $strLen = 40;
 
 	/**
 	 * @var boolean
 	 */
-	private static $noCLI = FALSE;
+	protected static $noCLI = FALSE;
+
+	/**
+	 * @var boolean
+	 */
+	protected $flagUseStringOnlyBinding = FALSE;
 
 	/**
 	 * Toggles CLI override. By default debugging functions will
@@ -226,7 +231,7 @@ class Debug extends RDefault implements Logger
 	 *
 	 * @return string
 	 */
-	private function writeQuery( $newSql, $newBindings )
+	protected function writeQuery( $newSql, $newBindings )
 	{
 		//avoid str_replace collisions: slot1 and slot10 (issue 407).
 		uksort( $newBindings, function( $a, $b ) {
@@ -252,14 +257,30 @@ class Debug extends RDefault implements Logger
 	 */
 	protected function fillInValue( $value )
 	{
+		if ( is_array( $value ) && count( $value ) == 2 ) {
+			$paramType = end( $value );
+			$value = reset( $value );
+		} else {
+			$paramType = NULL;
+		}
+
 		if ( is_null( $value ) ) $value = 'NULL';
 
-		$value = strval( $value );
+		if ( $this->flagUseStringOnlyBinding ) $paramType = \PDO::PARAM_STR;
+
+		if ( $paramType != \PDO::PARAM_INT && $paramType != \PDO::PARAM_STR ) {
+			if ( \RedBeanPHP\QueryWriter\AQueryWriter::canBeTreatedAsInt( $value ) || $value === 'NULL') {
+				$paramType = \PDO::PARAM_INT;
+			} else {
+				$paramType = \PDO::PARAM_STR;
+			}
+		}
+
 		if ( strlen( $value ) > ( $this->strLen ) ) {
 			$value = substr( $value, 0, ( $this->strLen ) ).'... ';
 		}
 
-		if ( !\RedBeanPHP\QueryWriter\AQueryWriter::canBeTreatedAsInt( $value ) && $value !== 'NULL') {
+		if ($paramType === \PDO::PARAM_STR) {
 			$value = '\''.$value.'\'';
 		}
 
@@ -397,6 +418,21 @@ class Debug extends RDefault implements Logger
 	public function setParamStringLength( $len = 20 )
 	{
 		$this->strLen = max(0, $len);
+		return $this;
+	}
+
+	/**
+	 * Whether to bind all parameters as strings.
+	 * If set to TRUE this will cause all integers to be bound as STRINGS.
+	 * This will NOT affect NULL values.
+	 *
+	 * @param boolean $yesNo pass TRUE to bind all parameters as strings.
+	 *
+	 * @return self
+	 */
+	public function setUseStringOnlyBinding( $yesNo = false )
+	{
+		$this->flagUseStringOnlyBinding = (boolean) $yesNo;
 		return $this;
 	}
 }
@@ -667,7 +703,7 @@ class RPDO implements Driver
 	 * @var string
 	 */
 	protected $mysqlCharset = '';
-	
+
 	/**
 	 * @var string
 	 */
@@ -696,23 +732,29 @@ class RPDO implements Driver
 	protected function bindParams( $statement, $bindings )
 	{
 		foreach ( $bindings as $key => &$value ) {
-			if ( is_integer( $key ) ) {
-				if ( is_null( $value ) ) {
-					$statement->bindValue( $key + 1, NULL, \PDO::PARAM_NULL );
-				} elseif ( !$this->flagUseStringOnlyBinding && AQueryWriter::canBeTreatedAsInt( $value ) && abs( $value ) <= $this->max ) {
-					$statement->bindParam( $key + 1, $value, \PDO::PARAM_INT );
-				} else {
-					$statement->bindParam( $key + 1, $value, \PDO::PARAM_STR );
-				}
+			$k = is_integer( $key ) ? $key + 1 : $key;
+
+			if ( is_array( $value ) && count( $value ) == 2 ) {
+				$paramType = end( $value );
+				$value = reset( $value );
 			} else {
-				if ( is_null( $value ) ) {
-					$statement->bindValue( $key, NULL, \PDO::PARAM_NULL );
-				} elseif ( !$this->flagUseStringOnlyBinding && AQueryWriter::canBeTreatedAsInt( $value ) && abs( $value ) <= $this->max ) {
-					$statement->bindParam( $key, $value, \PDO::PARAM_INT );
+				$paramType = NULL;
+			}
+
+			if ( is_null( $value ) ) {
+				$statement->bindValue( $k, NULL, \PDO::PARAM_NULL );
+				continue;
+			}
+
+			if ( $paramType != \PDO::PARAM_INT && $paramType != \PDO::PARAM_STR ) {
+				if ( !$this->flagUseStringOnlyBinding && AQueryWriter::canBeTreatedAsInt( $value ) && abs( $value ) <= $this->max ) {
+					$paramType = \PDO::PARAM_INT;
 				} else {
-					$statement->bindParam( $key, $value, \PDO::PARAM_STR );
+					$paramType = \PDO::PARAM_STR;
 				}
 			}
+
+			$statement->bindParam( $k, $value, $paramType );
 		}
 	}
 
@@ -956,6 +998,9 @@ class RPDO implements Driver
 	public function setUseStringOnlyBinding( $yesNo )
 	{
 		$this->flagUseStringOnlyBinding = (boolean) $yesNo;
+		if ( $this->loggingEnabled && $this->logger && method_exists($this->logger,'setUseStringOnlyBinding')) {
+			$this->logger->setUseStringOnlyBinding( $this->flagUseStringOnlyBinding );
+		}
 	}
 
 	/**
@@ -1054,11 +1099,14 @@ class RPDO implements Driver
 	public function GetCol( $sql, $bindings = array() )
 	{
 		$rows = $this->GetAll( $sql, $bindings );
+
+		if ( empty( $rows ) || !is_array( $rows ) ) {
+			return array();
+		}
+
 		$cols = array();
-		if ( $rows && is_array( $rows ) && count( $rows ) > 0 ) {
-			foreach ( $rows as $row ) {
-				$cols[] = array_shift( $row );
-			}
+		foreach ( $rows as $row ) {
+			$cols[] = reset( $row );
 		}
 
 		return $cols;
@@ -1070,14 +1118,12 @@ class RPDO implements Driver
 	public function GetOne( $sql, $bindings = array() )
 	{
 		$arr = $this->GetAll( $sql, $bindings );
-		$res = NULL;
-		if ( !is_array( $arr ) ) return NULL;
-		if ( count( $arr ) === 0 ) return NULL;
-		$row1 = array_shift( $arr );
-		if ( !is_array( $row1 ) ) return NULL;
-		if ( count( $row1 ) === 0 ) return NULL;
-		$col1 = array_shift( $row1 );
-		return $col1;
+
+		if ( empty( $arr[0] ) || !is_array( $arr[0] ) ) {
+			return NULL;
+		}
+
+		return reset( $arr[0] );
 	}
 
 	/**
@@ -1100,7 +1146,12 @@ class RPDO implements Driver
 	public function GetRow( $sql, $bindings = array() )
 	{
 		$arr = $this->GetAll( $sql, $bindings );
-		return array_shift( $arr );
+
+		if ( is_array( $arr ) && count( $arr ) ) {
+			return reset( $arr );
+		}
+
+		return array();
 	}
 
 	/**
@@ -1474,6 +1525,11 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 	/**
 	 * @var boolean
 	 */
+	protected static $useFluidCount = FALSE;
+
+	/**
+	 * @var boolean
+	 */
 	protected static $convertArraysToJSON = FALSE;
 
 	/**
@@ -1564,6 +1620,23 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 	 * @var boolean
 	 */
 	protected $all = FALSE;
+
+	/**
+	 * If fluid count is set to TRUE then $bean->ownCount() will
+	 * return 0 if the table does not exists.
+	 * Only for backward compatibility.
+	 * Returns previouds value.
+	 *
+	 * @param boolean $toggle toggle
+	 *
+	 * @return boolean
+	 */
+	public static function useFluidCount( $toggle )
+	{
+		$old = self::$useFluidCount;
+		self::$useFluidCount = $toggle;
+		return $old;
+	}
 
 	/**
 	 * If this is set to TRUE, the __toString function will
@@ -1697,14 +1770,17 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 	 * Auto-resolving aliased parent beans is convenient but can
 	 * be slower and can create infinite recursion if you
 	 * used aliases to break cyclic relations in your domain.
+	 * Returns previous value of the flag.
 	 *
 	 * @param boolean $automatic TRUE to enable automatic resolving aliased parents
 	 *
-	 * @return void
+	 * @return boolean
 	 */
 	public static function setAutoResolve( $automatic = TRUE )
 	{
+		$old = self::$autoResolve;
 		self::$autoResolve = (boolean) $automatic;
+		return $old;
 	}
 
 	/**
@@ -1752,24 +1828,27 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 	 */
 	private function parseJoin( $type )
 	{
-		$joinSql = '';
-		$joins = array();
-		if ( strpos($this->withSql, '@joined.' ) !== FALSE ) {
-			$writer   = $this->beanHelper->getToolBox()->getWriter();
-			$oldParts = $parts = explode( '@joined.', $this->withSql );
-			array_shift( $parts );
-			foreach($parts as $part) {
-				$explosion = explode( '.', $part );
-				$joinInfo  = array_shift( $explosion );
-				//Dont join more than once..
-				if ( !isset( $joins[$joinInfo] ) ) {
-					$joins[ $joinInfo ] = TRUE;
-					$joinSql  .= $writer->writeJoin( $type, $joinInfo, 'LEFT' );
-				}
-			}
-			$this->withSql = implode( '', $oldParts );
-			$joinSql      .= ' WHERE ';
+		if ( strpos($this->withSql, '@joined.' ) === FALSE ) {
+			return '';
 		}
+
+		$joinSql = ' ';
+		$joins = array();
+		$writer   = $this->beanHelper->getToolBox()->getWriter();
+		$oldParts = $parts = explode( '@joined.', $this->withSql );
+		array_shift( $parts );
+		foreach($parts as $part) {
+			$explosion = explode( '.', $part );
+			$joinInfo  = reset( $explosion );
+			//Dont join more than once..
+			if ( !isset( $joins[$joinInfo] ) ) {
+				$joins[ $joinInfo ] = TRUE;
+				$joinSql  .= $writer->writeJoin( $type, $joinInfo, 'LEFT' );
+			}
+		}
+		$this->withSql = implode( '', $oldParts );
+		$joinSql      .= ' WHERE ';
+
 		return $joinSql;
 	}
 
@@ -1814,8 +1893,6 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 			$assocManager     = $redbean->getAssociationManager();
 			$beans            = $assocManager->related( $this, $type, $this->withSql, $this->withParams );
 		}
-		$this->withSql    = '';
-		$this->withParams = array();
 		return $beans;
 	}
 
@@ -1858,23 +1935,20 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		}
 		$beans = array();
 		if ( $this->getID() ) {
-			$firstKey = NULL;
-			if ( count( $this->withParams ) > 0 ) {
-				reset( $this->withParams );
-				$firstKey = key( $this->withParams );
-			}
+			reset( $this->withParams );
 			$joinSql = $this->parseJoin( $type );
-			if ( !is_numeric( $firstKey ) || $firstKey === NULL ) {
+			$firstKey = count( $this->withParams ) > 0
+				? key( $this->withParams )
+				: 0;
+			if ( is_int( $firstKey ) ) {
+				$bindings = array_merge( array( $this->getID() ), $this->withParams );
+				$beans = $redbean->find( $type, array(), "{$joinSql} $myFieldLink = ? " . $this->withSql, $bindings );
+			} else {
 				$bindings           = $this->withParams;
 				$bindings[':slot0'] = $this->getID();
-				$beans = $redbean->find( $type, array(), " {$joinSql} $myFieldLink = :slot0 " . $this->withSql, $bindings );
-			} else {
-				$bindings = array_merge( array( $this->getID() ), $this->withParams );
-				$beans = $redbean->find( $type, array(), " {$joinSql} $myFieldLink = ? " . $this->withSql, $bindings );
+				$beans = $redbean->find( $type, array(), "{$joinSql} $myFieldLink = :slot0 " . $this->withSql, $bindings );
 			}
 		}
-		$this->withSql    = '';
-		$this->withParams = array();
 		foreach ( $beans as $beanFromList ) {
 			$beanFromList->__info['sys.parentcache.' . $parentField] = $this;
 		}
@@ -1965,14 +2039,21 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		if ( is_string( $selection ) ) {
 			$selection = explode( ',', $selection );
 		}
-		if ( !$notrim && is_array( $selection ) ) {
-			foreach ( $selection as $key => $selected ) {
-				$selection[$key] = trim( $selected );
+		if ( is_array( $selection ) ) {
+			if ( $notrim ) {
+				$selected = array_flip($selection);
+			} else {
+				$selected = array();
+				foreach ( $selection as $key => $select ) {
+					$selected[trim( $select )] = TRUE;
+				}
 			}
+		} else {
+			$selected = FALSE;
 		}
 		foreach ( $array as $key => $value ) {
 			if ( $key != '__info' ) {
-				if ( !$selection || ( $selection && in_array( $key, $selection ) ) ) {
+				if ( !$selected || isset( $selected[$key] ) ) {
 					if ( is_array($value ) ) {
 						if ( isset( $value['_type'] ) ) {
 							$bean = $this->beanHelper->getToolbox()->getRedBean()->dispense( $value['_type'] );
@@ -2015,6 +2096,7 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		$this->properties = $row;
 		$this->__info['sys.orig'] = $row;
 		$this->__info['changed'] = FALSE;
+		$this->__info['changelist'] = array();
 		return $this;
 	}
 
@@ -2206,13 +2288,7 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		$shadowKey = 'sys.shadow.'.$property;
 		if ( isset( $this->__info[ $shadowKey ] ) ) unset( $this->__info[$shadowKey] );
 		//also clear modifiers
-		$this->withSql    = '';
-		$this->withParams = array();
-		$this->aliasName  = NULL;
-		$this->fetchType  = NULL;
-		$this->noLoad     = FALSE;
-		$this->all        = FALSE;
-		$this->via        = NULL;
+		$this->clearModifiers();
 		return;
 	}
 
@@ -2514,40 +2590,46 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		}
 		$fieldLink      = $property . '_id';
 		$exists         = isset( $this->properties[$property] );
+
 		//If not exists and no field link and no list, bail out.
 		if ( !$exists && !isset($this->$fieldLink) && (!$isOwn && !$isShared )) {
-
-			$this->withSql    = '';
-			$this->withParams = array();
-			$this->aliasName  = NULL;
-			$this->fetchType  = NULL;
-			$this->noLoad     = FALSE;
-			$this->all        = FALSE;
-			$this->via        = NULL;
-
+			$this->clearModifiers();
+			/**
+			 * Github issue:
+			 * Remove $NULL to directly return NULL #625
+			 * @@ -1097,8 +1097,7 @@ public function &__get( $property )
+			 *		$this->all        = FALSE;
+			 *		$this->via        = NULL;
+			 *
+			 * - $NULL = NULL;
+			 * - return $NULL;
+			 * + return NULL;
+			 *
+			 * leads to regression:
+			 * PHP Stack trace:
+			 * PHP 1. {main}() testje.php:0
+			 * PHP 2. RedBeanPHP\OODBBean->__get() testje.php:22
+			 * Notice: Only variable references should be returned by reference in rb.php on line 2529
+			 */
 			$NULL = NULL;
 			return $NULL;
 		}
+
 		$hasAlias       = (!is_null($this->aliasName));
 		$differentAlias = ($hasAlias && $isOwn && isset($this->__info['sys.alias.'.$listName])) ?
-								($this->__info['sys.alias.'.$listName] !== $this->aliasName) : FALSE;
+									($this->__info['sys.alias.'.$listName] !== $this->aliasName) : FALSE;
 		$hasSQL         = ($this->withSql !== '' || $this->via !== NULL);
 		$hasAll         = (boolean) ($this->all);
 
 		//If exists and no list or exits and list not changed, bail out.
-		if ( $exists && ((!$isOwn && !$isShared ) ||  (!$hasSQL && !$differentAlias && !$hasAll)) ) {
-			$this->withSql    = '';
-			$this->withParams = array();
-			$this->aliasName  = NULL;
-			$this->fetchType  = NULL;
-			$this->noLoad     = FALSE;
-			$this->all        = FALSE;
-			$this->via        = NULL;
+		if ( $exists && ((!$isOwn && !$isShared ) || (!$hasSQL && !$differentAlias && !$hasAll)) ) {
+			$this->clearModifiers();
 			return $this->properties[$property];
 		}
 
 		list( $redbean, , , $toolbox ) = $this->beanHelper->getExtractedToolbox();
 
+		//If it's another bean, then we load it and return
 		if ( isset( $this->$fieldLink ) ) {
 			$this->__info['tainted'] = TRUE;
 			if ( isset( $this->__info["sys.parentcache.$property"] ) ) {
@@ -2575,17 +2657,11 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 				}
 			}
 			$this->properties[$property] = $bean;
-			$this->withSql               = '';
-			$this->withParams            = array();
-			$this->aliasName             = NULL;
-			$this->fetchType             = NULL;
-			$this->noLoad                = FALSE;
-			$this->all                   = FALSE;
-			$this->via                   = NULL;
+			$this->clearModifiers();
 			return $this->properties[$property];
-
 		}
-		//Implicit: elseif ( $isOwn || $isShared ) {
+
+		/* Implicit: elseif ( $isOwn || $isShared ) */
 		if ( $this->noLoad ) {
 			$beans = array();
 		} elseif ( $isOwn ) {
@@ -2593,19 +2669,13 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		} else {
 			$beans = $this->getSharedList( lcfirst( substr( $property, 6 ) ), $redbean, $toolbox );
 		}
-
 		$this->properties[$property]          = $beans;
 		$this->__info["sys.shadow.$property"] = $beans;
 		$this->__info['tainted']              = TRUE;
-		$this->withSql    = '';
-		$this->withParams = array();
-		$this->aliasName  = NULL;
-		$this->fetchType  = NULL;
-		$this->noLoad     = FALSE;
-		$this->all        = FALSE;
-		$this->via        = NULL;
 
+		$this->clearModifiers();
 		return $this->properties[$property];
+
 	}
 
 	/**
@@ -2666,13 +2736,7 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 			}
 		}
 
-		$this->withSql    = '';
-		$this->withParams = array();
-		$this->aliasName  = NULL;
-		$this->fetchType  = NULL;
-		$this->noLoad     = FALSE;
-		$this->all        = FALSE;
-		$this->via        = NULL;
+		$this->clearModifiers();
 
 		$this->__info['tainted'] = TRUE;
 		$this->__info['changed'] = TRUE;
@@ -2689,7 +2753,7 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 				throw new RedException( 'Cannot cast to bean.' );
 			}
 		}
-		
+
 		if ( $isFieldLink ){
 			unset( $this->properties[ $fieldName ]);
 			$this->properties[ $property ] = NULL;
@@ -2846,16 +2910,16 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 	 */
 	public function __call( $method, $args )
 	{
-		if (!isset($this->__info['model']) || !$this->__info['model']) {
+		if ( empty( $this->__info['model'] ) ) {
 			return NULL;
 		}
-		
+
 		$overrideDontFail = FALSE;
 		if ( strpos( $method, '@' ) === 0 ) {
 			$method = substr( $method, 1 );
 			$overrideDontFail = TRUE;
 		}
-		
+
 		if ( !method_exists( $this->__info['model'], $method ) ) {
 
 			if ( self::$errorHandlingFUSE === FALSE || $overrideDontFail ) {
@@ -3071,7 +3135,7 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 	 * @return OODBBean
 	 * @throws RedException
 	 */
-	public function traverse( $property, $function, $maxDepth = NULL )
+	public function traverse( $property, $function, $maxDepth = NULL, $depth = 1 )
 	{
 		$this->via = NULL;
 		if ( strpos( $property, 'shared' ) !== FALSE ) {
@@ -3094,13 +3158,13 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		if ( !is_array( $beans ) ) $beans = array( $beans );
 
 		foreach( $beans as $bean ) {
-			$function( $bean );
+			$function( $bean, $depth );
 			$bean->fetchType  = $oldFetchType;
 			$bean->aliasName  = $oldAliasName;
 			$bean->withSql    = $oldWith;
 			$bean->withParams = $oldBindings;
 
-			$bean->traverse( $property, $function, $maxDepth );
+			$bean->traverse( $property, $function, $maxDepth, $depth + 1 );
 		}
 
 		return $this;
@@ -3557,19 +3621,26 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 		}
 		$count = 0;
 		if ( $this->getID() ) {
-			$firstKey = NULL;
-			if ( count( $this->withParams ) > 0 ) {
-				reset( $this->withParams );
-				$firstKey = key( $this->withParams );
-			}
+			reset( $this->withParams );
 			$joinSql = $this->parseJoin( $type );
-			if ( !is_numeric( $firstKey ) || $firstKey === NULL ) {
-					$bindings           = $this->withParams;
-					$bindings[':slot0'] = $this->getID();
-					$count              = $this->beanHelper->getToolbox()->getWriter()->queryRecordCount( $type, array(), " {$joinSql} $myFieldLink = :slot0 " . $this->withSql, $bindings );
+			$firstKey = count( $this->withParams ) > 0
+				? key( $this->withParams )
+				: 0;
+			if ( is_int( $firstKey ) ) {
+				$bindings = array_merge( array( $this->getID() ), $this->withParams );
+				if ( !self::$useFluidCount ) {
+					$count = $this->beanHelper->getToolbox()->getWriter()->queryRecordCount( $type, array(), "{$joinSql} $myFieldLink = ? " . $this->withSql, $bindings );
+				} else {
+					$count = $this->beanHelper->getToolbox()->getRedBean()->count( $type, "{$joinSql} $myFieldLink = ? " . $this->withSql, $bindings );
+				}
 			} else {
-					$bindings = array_merge( array( $this->getID() ), $this->withParams );
-					$count    = $this->beanHelper->getToolbox()->getWriter()->queryRecordCount( $type, array(), " {$joinSql} $myFieldLink = ? " . $this->withSql, $bindings );
+				$bindings           = $this->withParams;
+				$bindings[':slot0'] = $this->getID();
+				if ( !self::$useFluidCount ) {
+					$count = $this->beanHelper->getToolbox()->getWriter()->queryRecordCount( $type, array(), "{$joinSql} $myFieldLink = :slot0 " . $this->withSql, $bindings );
+				} else {
+					$count = $this->beanHelper->getToolbox()->getRedBean()->count( $type, "{$joinSql} $myFieldLink = :slot0 " . $this->withSql, $bindings );
+				}
 			}
 		}
 		$this->clearModifiers();
@@ -3722,12 +3793,23 @@ class OODBBean implements\IteratorAggregate,\ArrayAccess,\Countable,Jsonable
 	 * of the bean. Exports the bean on JSON serialization,
 	 * for the JSON fans.
 	 *
+	 * Models can override jsonSerialize (issue #651) by
+	 * implementing a __jsonSerialize method which should return
+	 * an array. The __jsonSerialize override gets called with
+	 * the @ modifier to prevent errors or warnings.
+	 *
 	 * @see  http://php.net/manual/en/class.jsonserializable.php
 	 *
 	 * @return array
 	 */
 	public function jsonSerialize()
 	{
+		$json = $this->__call( '@__jsonSerialize', array( ) );
+
+		if ( $json !== NULL ) {
+			return $json;
+		}
+
 		return $this->export();
 	}
 }
@@ -3775,10 +3857,8 @@ abstract class Observable { //bracket must be here - otherwise coverage software
 			$this->observers[$eventname] = array();
 		}
 
-		foreach ( $this->observers[$eventname] as $o ) {
-			if ( $o == $observer ) {
-				return;
-			}
+		if ( in_array( $observer, $this->observers[$eventname] ) ) {
+			return;
 		}
 
 		$this->observers[$eventname][] = $observer;
@@ -4198,23 +4278,23 @@ class DBAdapter extends Observable implements Adapter
 
 		$rows  = $this->db->GetAll( $sql, $bindings );
 
+		if ( !$rows ) return array();
+
 		$assoc = array();
-		if ( !$rows ) {
-			return $assoc;
-		}
 
 		foreach ( $rows as $row ) {
 			if ( empty( $row ) ) continue;
 
-			if ( count( $row ) > 2 ) {
-            $key   = array_shift( $row );
-            $value = $row;
-        } elseif ( count( $row ) > 1 ) {
-				$key   = array_shift( $row );
-				$value = array_shift( $row );
-			} else {
-				$key   = array_shift( $row );
-				$value = $key;
+			$key   = array_shift( $row );
+			switch ( count( $row ) ) {
+				case 0:
+					$value = $key;
+					break;
+				case 1:
+					$value = reset( $row );
+					break;
+				default:
+					$value = $row;
 			}
 
 			$assoc[$key] = $value;
@@ -4354,6 +4434,14 @@ interface Cursor
 	public function getNextItem();
 
 	/**
+	 * Resets the cursor by closing it and re-executing the statement.
+	 * This reloads fresh data from the database for the whole collection.
+	 *
+	 * @return void
+	 */
+	public function reset();
+
+	/**
 	 * Closes the database cursor.
 	 * Some databases require a cursor to be closed before executing
 	 * another statement/opening a new cursor.
@@ -4420,6 +4508,15 @@ class PDOCursor implements Cursor
 	}
 
 	/**
+	 * @see Cursor::reset
+	 */
+	public function reset()
+	{
+		$this->close();
+		$this->res->execute();
+	}
+
+	/**
 	 * @see Cursor::close
 	 */
 	public function close()
@@ -4455,6 +4552,14 @@ class NullCursor implements Cursor
 	 * @see Cursor::getNextItem
 	 */
 	public function getNextItem()
+	{
+		return NULL;
+	}
+
+	/**
+	 * @see Cursor::reset
+	 */
+	public function reset()
 	{
 		return NULL;
 	}
@@ -4543,10 +4648,19 @@ class BeanCollection
 		$row = $this->cursor->getNextItem();
 		if ( $row ) {
 			$beans = $this->repository->convertToBeans( $this->type, array( $row ) );
-			$bean = array_shift( $beans );
-			return $bean;
+			return reset( $beans );
 		}
 		return NULL;
+	}
+
+	/**
+	 * Resets the collection from the start, like a fresh() on a bean.
+	 *
+	 * @return void
+	 */
+	public function reset()
+	{
+		$this->cursor->reset();
 	}
 
 	/**
@@ -4875,6 +4989,35 @@ interface QueryWriter
 	public function queryTagged( $type, $tagList, $all = FALSE, $addSql = '', $bindings = array() );
 
 	/**
+	 * Like queryTagged but only counts.
+	 *
+	 * @param string  $type     the bean type you want to query
+	 * @param array   $tagList  an array of strings, each string containing a tag title
+	 * @param boolean $all      if TRUE only return records that have been associated with ALL the tags in the list
+	 * @param string  $addSql   addition SQL snippet, for pagination
+	 * @param array   $bindings parameter bindings for additional SQL snippet
+	 *
+	 * @return integer
+	 */
+	public function queryCountTagged( $type, $tagList, $all = FALSE, $addSql = '', $bindings = array() );
+
+	/**
+	 * Returns all parent rows or child rows of a specified row.
+	 * Given a type specifier and a primary key id, this method returns either all child rows
+	 * as defined by having <type>_id = id or all parent rows as defined per id = <type>_id
+	 * taking into account an optional SQL snippet along with parameters.
+	 *
+	 * @param string  $type     the bean type you want to query rows for
+	 * @param integer $id       id of the reference row
+	 * @param boolean $up       TRUE to query parent rows, FALSE to query child rows
+	 * @param string  $addSql   optional SQL snippet to embed in the query
+	 * @param array   $bindings parameter bindings for additional SQL snippet
+	 *
+	 * @return array
+	 */
+	public function queryRecursiveCommonTableExpression( $type, $id, $up = TRUE, $addSql = NULL, $bindings = array() );
+
+	/**
 	 * This method should update (or insert a record), it takes
 	 * a table name, a list of update values ( $field => $value ) and an
 	 * primary key ID (optional). If no primary key ID is provided, an
@@ -5124,6 +5267,11 @@ abstract class AQueryWriter
 	protected static $flagUseJSONColumns = FALSE;
 
 	/**
+	 * @var boolean
+	 */
+	protected static $enableISNULLConditions = FALSE;
+
+	/**
 	 * @var array
 	 */
 	public static $renames = array();
@@ -5169,6 +5317,30 @@ abstract class AQueryWriter
 	public $typeno_sqltype = array();
 
 	/**
+	 * @var bool
+	 */
+	protected static $noNuke = false;
+
+	/**
+	 * Toggles support for IS-NULL-conditions.
+	 * If IS-NULL-conditions are enabled condition arrays
+	 * for functions including findLike() are treated so that
+	 * 'field' => NULL will be interpreted as field IS NULL
+	 * instead of being skipped. Returns the previous
+	 * value of the flag.
+	 *
+	 * @param boolean $flag TRUE or FALSE
+	 *
+	 * @return boolean
+	 */
+	public static function useISNULLConditions( $flag )
+	{
+		$old = self::$enableISNULLConditions;
+		self::$enableISNULLConditions = $flag;
+		return $old;
+	}
+
+	/**
 	 * Toggles support for automatic generation of JSON columns.
 	 * Using JSON columns means that strings containing JSON will
 	 * cause the column to be created (not modified) as a JSON column.
@@ -5184,6 +5356,21 @@ abstract class AQueryWriter
 	{
 		$old = self::$flagUseJSONColumns;
 		self::$flagUseJSONColumns = $flag;
+		return $old;
+	}
+
+	/**
+	 * Toggles support for nuke().
+	 * Can be used to turn off the nuke() feature for security reasons.
+	 * Returns the old flag value.
+	 *
+	 * @param boolean $flag TRUE or FALSE
+	 *
+	 * @return boolean
+	 */
+	public static function forbidNuke( $flag ) {
+		$old = self::$noNuke;
+		self::$noNuke = (bool) $flag;
 		return $old;
 	}
 
@@ -5353,7 +5540,6 @@ abstract class AQueryWriter
 	private function getCached( $cacheTag, $key )
 	{
 		$sql = $this->adapter->getSQL();
-
 		if ($this->updateCache()) {
 			if ( isset( $this->cache[$cacheTag][$key] ) ) {
 				return $this->cache[$cacheTag][$key];
@@ -5409,7 +5595,6 @@ abstract class AQueryWriter
 		} else {
 			$this->cache[$cacheTag] = array();
 		}
-
 		$this->cache[$cacheTag][$key] = $values;
 	}
 
@@ -5439,13 +5624,23 @@ abstract class AQueryWriter
 
 		$sqlConditions = array();
 		foreach ( $conditions as $column => $values ) {
-			if ( $values === NULL ) continue;
+			if ( $values === NULL ) {
+				if ( self::$enableISNULLConditions ) {
+					$sqlConditions[] = $this->esc( $column ) . ' IS NULL';
+				}
+				continue;
+			}
 
 			if ( is_array( $values ) ) {
 				if ( empty( $values ) ) continue;
 			} else {
 				$values = array( $values );
 			}
+
+			$checkOODB = reset( $values );
+			if ( $checkOODB instanceof OODBBean && $checkOODB->getMeta( 'type' ) === $column && substr( $column, -3 ) != '_id' )
+				$column = $column . '_id';
+
 
 			$sql = $this->esc( $column );
 			$sql .= ' IN ( ';
@@ -5456,6 +5651,9 @@ abstract class AQueryWriter
 				array_unshift($sqlConditions, $sql);
 
 				foreach ( $values as $k => $v ) {
+					if ( $v instanceof OODBBean ) {
+						$v = $v->id;
+					}
 					$values[$k] = strval( $v );
 
 					array_unshift( $bindings, $v );
@@ -5465,6 +5663,9 @@ abstract class AQueryWriter
 				$slots = array();
 
 				foreach( $values as $k => $v ) {
+					if ( $v instanceof OODBBean ) {
+						$v = $v->id;
+					}
 					$slot            = ':slot'.$counter++;
 					$slots[]         = $slot;
 					$bindings[$slot] = strval( $v );
@@ -5476,15 +5677,12 @@ abstract class AQueryWriter
 		}
 
 		$sql = '';
-		$addSql = $this->glueSQLCondition( $addSql, !empty( $sqlConditions ) ? QueryWriter::C_GLUE_AND : NULL );
 		if ( !empty( $sqlConditions ) ) {
-			$sql = implode( ' AND ', $sqlConditions );
-			$sql = " WHERE ( $sql ) ";
-
-			if ( $addSql ) $sql .= $addSql;
-		} elseif ( $addSql ) {
-			$sql = $addSql;
+			$sql .= " WHERE ( " . implode( ' AND ', $sqlConditions ) . ") ";
 		}
+
+		$addSql = $this->glueSQLCondition( $addSql, !empty( $sqlConditions ) ? QueryWriter::C_GLUE_AND : NULL );
+		if ( $addSql ) $sql .= $addSql;
 
 		return $sql;
 	}
@@ -5956,10 +6154,8 @@ abstract class AQueryWriter
 	 */
 	public function queryRecord( $type, $conditions = array(), $addSql = NULL, $bindings = array() )
 	{
-		$key = NULL;
-		if ( $this->flagUseCache ) {
-			$key = $this->getCacheKey( array( $conditions, "$addSql {$this->sqlSelectSnippet}", $bindings, 'select' ) );
-
+		if ( $this->flagUseCache && $this->sqlSelectSnippet != self::C_SELECT_SNIPPET_FOR_UPDATE ) {
+			$key = $this->getCacheKey( array( $conditions, trim("$addSql {$this->sqlSelectSnippet}"), $bindings, 'select' ) );
 			if ( $cached = $this->getCached( $type, $key ) ) {
 				return $cached;
 			}
@@ -5971,7 +6167,7 @@ abstract class AQueryWriter
 		if ( count( self::$sqlFilters ) ) {
 			$sqlFilterStr = $this->getSQLFilterSnippet( $type );
 		}
-		
+
 		if ( is_array ( $conditions ) && !empty ( $conditions ) ) {
 			$sql = $this->makeSQLFromConditions( $conditions, $bindings, $addSql );
 		} else {
@@ -5982,7 +6178,8 @@ abstract class AQueryWriter
 		$sql   = "SELECT {$fieldSelection} {$sqlFilterStr} FROM {$table} {$sql} {$this->sqlSelectSnippet} -- keep-cache";
 		$this->sqlSelectSnippet = '';
 		$rows  = $this->adapter->get( $sql, $bindings );
-		if ( $this->flagUseCache && $key ) {
+
+		if ( $this->flagUseCache && !empty( $key ) ) {
 			$this->putResultInCache( $type, $key, $rows );
 		}
 
@@ -5994,9 +6191,18 @@ abstract class AQueryWriter
 	 */
 	public function queryRecordWithCursor( $type, $addSql = NULL, $bindings = array() )
 	{
-		$sql = $this->glueSQLCondition( $addSql, NULL );
 		$table = $this->esc( $type );
-		$sql   = "SELECT {$table}.* FROM {$table} {$sql}";
+
+		$sqlFilterStr = '';
+		if ( count( self::$sqlFilters ) ) {
+			$sqlFilterStr = $this->getSQLFilterSnippet( $type );
+		}
+
+		$fieldSelection = ( self::$flagNarrowFieldMode ) ? "{$table}.*" : '*';
+
+		$sql = $this->glueSQLCondition( $addSql, NULL );
+		$sql = "SELECT {$fieldSelection} {$sqlFilterStr} FROM {$table} {$sql} -- keep-cache";
+
 		return $this->adapter->getCursor( $sql, $bindings );
 	}
 
@@ -6005,16 +6211,16 @@ abstract class AQueryWriter
 	 */
 	public function queryRecordRelated( $sourceType, $destType, $linkIDs, $addSql = '', $bindings = array() )
 	{
-		$addSql = $this->glueSQLCondition( $addSql, QueryWriter::C_GLUE_WHERE );
-
 		list( $sourceTable, $destTable, $linkTable, $sourceCol, $destCol ) = $this->getRelationalTablesAndColumns( $sourceType, $destType );
 
-		$key = $this->getCacheKey( array( $sourceType, $destType, implode( ',', $linkIDs ), $addSql, $bindings ) );
-
-		if ( $this->flagUseCache && $cached = $this->getCached( $destType, $key ) ) {
-			return $cached;
+		if ( $this->flagUseCache ) {
+			$key = $this->getCacheKey( array( $sourceType, implode( ',', $linkIDs ), trim($addSql), $bindings, 'selectrelated' ) );
+			if ( $cached = $this->getCached( $destType, $key ) ) {
+				return $cached;
+			}
 		}
 
+		$addSql = $this->glueSQLCondition( $addSql, QueryWriter::C_GLUE_WHERE );
 		$inClause = $this->getParametersForInClause( $linkIDs, $bindings );
 
 		$sqlFilterStr = '';
@@ -6054,7 +6260,9 @@ abstract class AQueryWriter
 
 		$rows = $this->adapter->get( $sql, $bindings );
 
-		$this->putResultInCache( $destType, $key, $rows );
+		if ( $this->flagUseCache ) {
+			$this->putResultInCache( $destType, $key, $rows );
+		}
 
 		return $rows;
 	}
@@ -6066,10 +6274,11 @@ abstract class AQueryWriter
 	{
 		list( $sourceTable, $destTable, $linkTable, $sourceCol, $destCol ) = $this->getRelationalTablesAndColumns( $sourceType, $destType );
 
-		$key = $this->getCacheKey( array( $sourceType, $destType, $sourceID, $destID ) );
-
-		if ( $this->flagUseCache && $cached = $this->getCached( $linkTable, $key ) ) {
-			return $cached;
+		if ( $this->flagUseCache ) {
+			$key = $this->getCacheKey( array( $sourceType, $destType, $sourceID, $destID, 'selectlink' ) );
+			if ( $cached = $this->getCached( $linkTable, $key ) ) {
+				return $cached;
+			}
 		}
 
 		$sqlFilterStr = '';
@@ -6088,16 +6297,38 @@ abstract class AQueryWriter
 			$row = $this->adapter->getRow( $sql, array( $sourceID, $destID ) );
 		}
 
-		$this->putResultInCache( $linkTable, $key, $row );
+		if ( $this->flagUseCache ) {
+			$this->putResultInCache( $linkTable, $key, $row );
+		}
 
 		return $row;
 	}
 
 	/**
-	 * @see QueryWriter::queryTagged
+	 * Returns or counts all rows of specified type that have been tagged with one of the
+	 * strings in the specified tag list array.
+	 *
+	 * Note that the additional SQL snippet can only be used for pagination,
+	 * the SQL snippet will be appended to the end of the query.
+	 *
+	 * @param string  $type     the bean type you want to query
+	 * @param array   $tagList  an array of strings, each string containing a tag title
+	 * @param boolean $all      if TRUE only return records that have been associated with ALL the tags in the list
+	 * @param string  $addSql   addition SQL snippet, for pagination
+	 * @param array   $bindings parameter bindings for additional SQL snippet
+	 * @param string  $wrap     SQL wrapper string (use %s for subquery)
+	 *
+	 * @return array
 	 */
-	public function queryTagged( $type, $tagList, $all = FALSE, $addSql = '', $bindings = array() )
+	private function queryTaggedGeneric( $type, $tagList, $all = FALSE, $addSql = '', $bindings = array(), $wrap = '%s' )
 	{
+		if ( $this->flagUseCache ) {
+			$key = $this->getCacheKey( array( implode( ',', $tagList ), $all, trim($addSql), $bindings, 'selectTagged' ) );
+			if ( $cached = $this->getCached( $type, $key ) ) {
+				return $cached;
+			}
+		}
+
 		$assocType = $this->getAssocTable( array( $type, 'tag' ) );
 		$assocTable = $this->esc( $assocType );
 		$assocField = $type . '_id';
@@ -6113,11 +6344,35 @@ abstract class AQueryWriter
 			GROUP BY {$table}.id
 			HAVING count({$table}.id) >= ?
 			{$addSql}
+			-- keep-cache
 		";
+		$sql = sprintf($wrap,$sql);
 
 		$bindings = array_merge( $tagList, array( $score ), $bindings );
 		$rows = $this->adapter->get( $sql, $bindings );
+
+		if ( $this->flagUseCache ) {
+			$this->putResultInCache( $type, $key, $rows );
+		}
+
 		return $rows;
+	}
+
+	/**
+	 * @see QueryWriter::queryTagged
+	 */
+	public function queryTagged( $type, $tagList, $all = FALSE, $addSql = '', $bindings = array() )
+	{
+		return $this->queryTaggedGeneric( $type, $tagList, $all, $addSql, $bindings );
+	}
+
+	/**
+	 * @see QueryWriter::queryCountTagged
+	 */
+	public function queryCountTagged( $type, $tagList, $all = FALSE, $addSql = '', $bindings = array() )
+	{
+		$rows = $this->queryTaggedGeneric( $type, $tagList, $all, $addSql, $bindings, 'SELECT COUNT(*) AS counted FROM (%s) AS counting' );
+		return intval($rows[0]['counted']);
 	}
 
 	/**
@@ -6125,19 +6380,29 @@ abstract class AQueryWriter
 	 */
 	public function queryRecordCount( $type, $conditions = array(), $addSql = NULL, $bindings = array() )
 	{
-		$table  = $this->esc( $type );
+		if ( $this->flagUseCache ) {
+			$key = $this->getCacheKey( array( $conditions, trim($addSql), $bindings, 'count' ) );
+			if ( $cached = $this->getCached( $type, $key ) ) {
+				return $cached;
+			}
+		}
 
-		$this->updateCache(); //check if cache chain has been broken
+		$table  = $this->esc( $type );
 
 		if ( is_array ( $conditions ) && !empty ( $conditions ) ) {
 			$sql = $this->makeSQLFromConditions( $conditions, $bindings, $addSql );
 		} else {
 			$sql = $this->glueSQLCondition( $addSql );
 		}
-		
-		$sql    = "SELECT COUNT(*) FROM {$table} {$sql} -- keep-cache";
 
-		return (int) $this->adapter->getCell( $sql, $bindings );
+		$sql    = "SELECT COUNT(*) FROM {$table} {$sql} -- keep-cache";
+		$count  = (int) $this->adapter->getCell( $sql, $bindings );
+
+		if ( $this->flagUseCache ) {
+			$this->putResultInCache( $type, $key, $count );
+		}
+
+		return $count;
 	}
 
 	/**
@@ -6147,7 +6412,13 @@ abstract class AQueryWriter
 	{
 		list( $sourceTable, $destTable, $linkTable, $sourceCol, $destCol ) = $this->getRelationalTablesAndColumns( $sourceType, $destType );
 
-		$this->updateCache(); //check if cache chain has been broken
+		if ( $this->flagUseCache ) {
+			$cacheType = "#{$sourceType}/{$destType}";
+			$key = $this->getCacheKey( array( $sourceType, $destType, $linkID, trim($addSql), $bindings, 'countrelated' ) );
+			if ( $cached = $this->getCached( $cacheType, $key ) ) {
+				return $cached;
+			}
+		}
 
 		if ( $sourceType === $destType ) {
 			$sql = "
@@ -6170,7 +6441,48 @@ abstract class AQueryWriter
 			$bindings = array_merge( array( $linkID ), $bindings );
 		}
 
-		return (int) $this->adapter->getCell( $sql, $bindings );
+		$count = (int) $this->adapter->getCell( $sql, $bindings );
+
+		if ( $this->flagUseCache ) {
+			$this->putResultInCache( $cacheType, $key, $count );
+		}
+
+		return $count;
+	}
+
+	/**
+	 * @see QueryWriter::queryRecursiveCommonTableExpression
+	 */
+	public function queryRecursiveCommonTableExpression( $type, $id, $up = TRUE, $addSql = NULL, $bindings = array() )
+	{
+		$alias     = $up ? 'parent' : 'child';
+		$direction = $up ? " {$alias}.{$type}_id = {$type}.id " : " {$alias}.id = {$type}.{$type}_id ";
+
+		/* allow numeric and named param bindings, if '0' exists then numeric */
+		if ( array_key_exists( 0,$bindings ) ) {
+			array_unshift( $bindings, $id );
+			$idSlot = '?';
+		} else {
+			$idSlot = ':slot0';
+			$bindings[$idSlot] = $id;
+		}
+
+		$sql = $this->glueSQLCondition( $addSql, QueryWriter::C_GLUE_WHERE );
+
+		$rows = $this->adapter->get("
+			WITH RECURSIVE tree AS
+			(
+				SELECT *
+				FROM {$type} WHERE {$type}.id = {$idSlot}
+				UNION ALL
+				SELECT {$type}.* FROM {$type}
+				INNER JOIN tree {$alias} ON {$direction}
+			)
+			SELECT * FROM tree {$sql};",
+			$bindings
+		);
+
+		return $rows;
 	}
 
 	/**
@@ -6185,10 +6497,10 @@ abstract class AQueryWriter
 		} else {
 			$sql = $this->glueSQLCondition( $addSql );
 		}
-		
+
 		$sql    = "DELETE FROM {$table} {$sql}";
 
-		$this->adapter->exec( $sql, $bindings );
+		return $this->adapter->exec( $sql, $bindings );
 	}
 
 	/**
@@ -6277,14 +6589,14 @@ abstract class AQueryWriter
 	 * Clears the internal query cache array and returns its overall
 	 * size.
 	 *
-	 * @return integer
+	 * @return mixed
 	 */
-	public function flushCache( $newMaxCacheSizePerType = NULL )
+	public function flushCache( $newMaxCacheSizePerType = NULL, $countCache = TRUE )
 	{
 		if ( !is_null( $newMaxCacheSizePerType ) && $newMaxCacheSizePerType > 0 ) {
 			$this->maxCacheSizePerType = $newMaxCacheSizePerType;
 		}
-		$count = count( $this->cache, COUNT_RECURSIVE );
+		$count = $countCache ? count( $this->cache, COUNT_RECURSIVE ) : NULL;
 		$this->cache = array();
 		return $count;
 	}
@@ -6378,6 +6690,7 @@ class MySQL extends AQueryWriter implements QueryWriter
 	const C_DATATYPE_TEXT32           = 7;
 	const C_DATATYPE_SPECIAL_DATE     = 80;
 	const C_DATATYPE_SPECIAL_DATETIME = 81;
+	const C_DATATYPE_SPECIAL_TIME     = 83;  //MySQL time column (only manual)
 	const C_DATATYPE_SPECIAL_POINT    = 90;
 	const C_DATATYPE_SPECIAL_LINESTRING = 91;
 	const C_DATATYPE_SPECIAL_POLYGON    = 92;
@@ -6483,6 +6796,7 @@ class MySQL extends AQueryWriter implements QueryWriter
 			MySQL::C_DATATYPE_TEXT32           => ' LONGTEXT ',
 			MySQL::C_DATATYPE_SPECIAL_DATE     => ' DATE ',
 			MySQL::C_DATATYPE_SPECIAL_DATETIME => ' DATETIME ',
+			MySQL::C_DATATYPE_SPECIAL_TIME     => ' TIME ',
 			MySQL::C_DATATYPE_SPECIAL_POINT    => ' POINT ',
 			MySQL::C_DATATYPE_SPECIAL_LINESTRING => ' LINESTRING ',
 			MySQL::C_DATATYPE_SPECIAL_POLYGON => ' POLYGON ',
@@ -6530,7 +6844,7 @@ class MySQL extends AQueryWriter implements QueryWriter
 		$charset_collate = $this->adapter->getDatabase()->getMysqlEncoding( TRUE );
 		$charset = $charset_collate['charset'];
 		$collate = $charset_collate['collate'];
-		
+
 		$sql   = "CREATE TABLE $table (id INT( 11 ) UNSIGNED NOT NULL AUTO_INCREMENT, PRIMARY KEY ( id )) ENGINE = InnoDB DEFAULT CHARSET={$charset} COLLATE={$collate} ";
 
 		$this->adapter->exec( $sql );
@@ -6743,6 +7057,7 @@ class MySQL extends AQueryWriter implements QueryWriter
 	 */
 	public function wipeAll()
 	{
+		if (AQueryWriter::$noNuke) throw new \Exception('The nuke() command has been disabled using noNuke() or R::feature(novice/...).');
 		$this->adapter->exec( 'SET FOREIGN_KEY_CHECKS = 0;' );
 
 		foreach ( $this->getTables() as $t ) {
@@ -6751,6 +7066,387 @@ class MySQL extends AQueryWriter implements QueryWriter
 		}
 
 		$this->adapter->exec( 'SET FOREIGN_KEY_CHECKS = 1;' );
+	}
+}
+}
+
+namespace RedBeanPHP\QueryWriter {
+use RedBeanPHP\QueryWriter\AQueryWriter as AQueryWriter;
+use RedBeanPHP\QueryWriter as QueryWriter;
+use RedBeanPHP\Adapter\DBAdapter as DBAdapter;
+use RedBeanPHP\Adapter as Adapter;
+use RedBeanPHP\RedException\SQL as SQLException;
+
+/**
+ * RedBeanPHP CUBRID Writer.
+ * This is a QueryWriter class for RedBeanPHP.
+ * This QueryWriter provides support for the CUBRID database platform.
+ *
+ * @file    RedBeanPHP/QueryWriter/CUBRID.php
+ * @author  Gabor de Mooij and the RedBeanPHP Community
+ * @license BSD/GPLv2
+ *
+ * @copyright
+ * (c) copyright G.J.G.T. (Gabor) de Mooij and the RedBeanPHP Community.
+ * This source file is subject to the BSD/GPLv2 License that is bundled
+ * with this source code in the file license.txt.
+ */
+class CUBRID extends AQueryWriter implements QueryWriter
+{
+	/**
+	 * Data types
+	 */
+	const C_DATATYPE_INTEGER          = 0;
+	const C_DATATYPE_DOUBLE           = 1;
+	const C_DATATYPE_STRING           = 2;
+	const C_DATATYPE_SPECIAL_DATE     = 80;
+	const C_DATATYPE_SPECIAL_DATETIME = 81;
+	const C_DATATYPE_SPECIFIED        = 99;
+
+	/**
+	 * @var DBAdapter
+	 */
+	protected $adapter;
+
+	/**
+	 * @var string
+	 */
+	protected $quoteCharacter = '`';
+
+	/**
+	 * This method adds a foreign key from type and field to
+	 * target type and target field.
+	 * The foreign key is created without an action. On delete/update
+	 * no action will be triggered. The FK is only used to allow database
+	 * tools to generate pretty diagrams and to make it easy to add actions
+	 * later on.
+	 * This methods accepts a type and infers the corresponding table name.
+	 *
+	 * @param  string  $type           type that will have a foreign key field
+	 * @param  string  $targetType     points to this type
+	 * @param  string  $property       field that contains the foreign key value
+	 * @param  string  $targetProperty field where the fk points to
+	 * @param  boolean $isDep          is dependent
+	 *
+	 * @return bool
+	 */
+	protected function buildFK( $type, $targetType, $property, $targetProperty, $isDep = FALSE )
+	{
+		$table           = $this->esc( $type );
+		$tableNoQ        = $this->esc( $type, TRUE );
+		$targetTable     = $this->esc( $targetType );
+		$targetTableNoQ  = $this->esc( $targetType, TRUE );
+		$column          = $this->esc( $property );
+		$columnNoQ       = $this->esc( $property, TRUE );
+		$targetColumn    = $this->esc( $targetProperty );
+		if ( !is_null( $this->getForeignKeyForTypeProperty( $tableNoQ, $columnNoQ ) ) ) return FALSE;
+		$needsToDropFK   = FALSE;
+		$casc = ( $isDep ? 'CASCADE' : 'SET NULL' );
+		$sql  = "ALTER TABLE $table ADD CONSTRAINT FOREIGN KEY($column) REFERENCES $targetTable($targetColumn) ON DELETE $casc ";
+		try {
+			$this->adapter->exec( $sql );
+		} catch( SQLException $e ) {
+			return FALSE;
+		}
+		return TRUE;
+	}
+
+	/**
+	 * @see AQueryWriter::getKeyMapForType
+	 */
+	protected function getKeyMapForType( $type  )
+	{
+		$sqlCode = $this->adapter->get("SHOW CREATE TABLE `{$type}`");
+		if (!isset($sqlCode[0])) return array();
+		$matches = array();
+		preg_match_all( '/CONSTRAINT\s+\[([\w_]+)\]\s+FOREIGN\s+KEY\s+\(\[([\w_]+)\]\)\s+REFERENCES\s+\[([\w_]+)\](\s+ON\s+DELETE\s+(CASCADE|SET\sNULL|RESTRICT|NO\sACTION)\s+ON\s+UPDATE\s+(SET\sNULL|RESTRICT|NO\sACTION))?/', $sqlCode[0]['CREATE TABLE'], $matches );
+		$list = array();
+		if (!isset($matches[0])) return $list;
+		$max = count($matches[0]);
+		for($i = 0; $i < $max; $i++) {
+			$label = $this->makeFKLabel( $matches[2][$i], $matches[3][$i], 'id' );
+			$list[ $label ] = array(
+				'name' => $matches[1][$i],
+				'from' => $matches[2][$i],
+				'table' => $matches[3][$i],
+				'to' => 'id',
+				'on_update' => $matches[6][$i],
+				'on_delete' => $matches[5][$i]
+			);
+		}
+		return $list;
+	}
+
+	/**
+	 * Constructor
+	 * Most of the time, you do not need to use this constructor,
+	 * since the facade takes care of constructing and wiring the
+	 * RedBeanPHP core objects. However if you would like to
+	 * assemble an OODB instance yourself, this is how it works:
+	 *
+	 * Usage:
+	 *
+	 * <code>
+	 * $database = new RPDO( $dsn, $user, $pass );
+	 * $adapter = new DBAdapter( $database );
+	 * $writer = new PostgresWriter( $adapter );
+	 * $oodb = new OODB( $writer, FALSE );
+	 * $bean = $oodb->dispense( 'bean' );
+	 * $bean->name = 'coffeeBean';
+	 * $id = $oodb->store( $bean );
+	 * $bean = $oodb->load( 'bean', $id );
+	 * </code>
+	 *
+	 * The example above creates the 3 RedBeanPHP core objects:
+	 * the Adapter, the Query Writer and the OODB instance and
+	 * wires them together. The example also demonstrates some of
+	 * the methods that can be used with OODB, as you see, they
+	 * closely resemble their facade counterparts.
+	 *
+	 * The wiring process: create an RPDO instance using your database
+	 * connection parameters. Create a database adapter from the RPDO
+	 * object and pass that to the constructor of the writer. Next,
+	 * create an OODB instance from the writer. Now you have an OODB
+	 * object.
+	 *
+	 * @param Adapter $adapter Database Adapter
+	 */
+	public function __construct( Adapter $adapter )
+	{
+		$this->typeno_sqltype = array(
+			CUBRID::C_DATATYPE_INTEGER          => ' INTEGER ',
+			CUBRID::C_DATATYPE_DOUBLE           => ' DOUBLE ',
+			CUBRID::C_DATATYPE_STRING           => ' STRING ',
+			CUBRID::C_DATATYPE_SPECIAL_DATE     => ' DATE ',
+			CUBRID::C_DATATYPE_SPECIAL_DATETIME => ' DATETIME ',
+		);
+
+		$this->sqltype_typeno = array();
+
+		foreach ( $this->typeno_sqltype as $k => $v ) {
+			$this->sqltype_typeno[trim( ( $v ) )] = $k;
+		}
+
+		$this->sqltype_typeno['STRING(1073741823)'] = self::C_DATATYPE_STRING;
+
+		$this->adapter = $adapter;
+	}
+
+	/**
+	 * This method returns the datatype to be used for primary key IDS and
+	 * foreign keys. Returns one if the data type constants.
+	 *
+	 * @return integer
+	 */
+	public function getTypeForID()
+	{
+		return self::C_DATATYPE_INTEGER;
+	}
+
+	/**
+	 * @see QueryWriter::getTables
+	 */
+	public function getTables()
+	{
+		$rows = $this->adapter->getCol( "SELECT class_name FROM db_class WHERE is_system_class = 'NO';" );
+
+		return $rows;
+	}
+
+	/**
+	 * @see QueryWriter::createTable
+	 */
+	public function createTable( $table )
+	{
+		$sql  = 'CREATE TABLE '
+			. $this->esc( $table )
+			. ' ("id" integer AUTO_INCREMENT, CONSTRAINT "pk_'
+			. $this->esc( $table, TRUE )
+			. '_id" PRIMARY KEY("id"))';
+
+		$this->adapter->exec( $sql );
+	}
+
+	/**
+	 * @see QueryWriter::getColumns
+	 */
+	public function getColumns( $table )
+	{
+		$table = $this->esc( $table );
+
+		$columnsRaw = $this->adapter->get( "SHOW COLUMNS FROM $table" );
+
+		$columns = array();
+		foreach ( $columnsRaw as $r ) {
+			$columns[$r['Field']] = $r['Type'];
+		}
+
+		return $columns;
+	}
+
+	/**
+	 * @see QueryWriter::scanType
+	 */
+	public function scanType( $value, $flagSpecial = FALSE )
+	{
+		$this->svalue = $value;
+
+		if ( is_null( $value ) ) {
+			return self::C_DATATYPE_INTEGER;
+		}
+
+		if ( $flagSpecial ) {
+			if ( preg_match( '/^\d{4}\-\d\d-\d\d$/', $value ) ) {
+				return self::C_DATATYPE_SPECIAL_DATE;
+			}
+			if ( preg_match( '/^\d{4}\-\d\d-\d\d\s\d\d:\d\d:\d\d$/', $value ) ) {
+				return self::C_DATATYPE_SPECIAL_DATETIME;
+			}
+		}
+
+		$value = strval( $value );
+
+		if ( !$this->startsWithZeros( $value ) ) {
+			if ( is_numeric( $value ) && ( floor( $value ) == $value ) && $value >= -2147483647 && $value <= 2147483647 ) {
+				return self::C_DATATYPE_INTEGER;
+			}
+			if ( is_numeric( $value ) ) {
+				return self::C_DATATYPE_DOUBLE;
+			}
+		}
+
+		return self::C_DATATYPE_STRING;
+	}
+
+	/**
+	 * @see QueryWriter::code
+	 */
+	public function code( $typedescription, $includeSpecials = FALSE )
+	{
+		$r = ( ( isset( $this->sqltype_typeno[$typedescription] ) ) ? $this->sqltype_typeno[$typedescription] : self::C_DATATYPE_SPECIFIED );
+
+		if ( $includeSpecials ) {
+			return $r;
+		}
+
+		if ( $r >= QueryWriter::C_DATATYPE_RANGE_SPECIAL ) {
+			return self::C_DATATYPE_SPECIFIED;
+		}
+
+		return $r;
+	}
+
+	/**
+	 * @see QueryWriter::addColumn
+	 */
+	public function addColumn( $type, $column, $field )
+	{
+		$table  = $type;
+		$type   = $field;
+
+		$table  = $this->esc( $table );
+		$column = $this->esc( $column );
+
+		$type   = array_key_exists( $type, $this->typeno_sqltype ) ? $this->typeno_sqltype[$type] : '';
+
+		$this->adapter->exec( "ALTER TABLE $table ADD COLUMN $column $type " );
+	}
+
+	/**
+	 * @see QueryWriter::addUniqueIndex
+	 */
+	public function addUniqueConstraint( $type, $properties )
+	{
+		$tableNoQ = $this->esc( $type, TRUE );
+		$columns = array();
+		foreach( $properties as $key => $column ) $columns[$key] = $this->esc( $column );
+		$table = $this->esc( $type );
+		sort( $columns ); // else we get multiple indexes due to order-effects
+		$name = 'UQ_' . sha1( implode( ',', $columns ) );
+		$sql = "ALTER TABLE $table ADD CONSTRAINT UNIQUE $name (" . implode( ',', $columns ) . ")";
+		try {
+			$this->adapter->exec( $sql );
+		} catch( SQLException $e ) {
+			return FALSE;
+		}
+		return TRUE;
+	}
+
+	/**
+	 * @see QueryWriter::sqlStateIn
+	 */
+	public function sqlStateIn( $state, $list, $extraDriverDetails = array() )
+	{
+		return ( $state == 'HY000' ) ? ( count( array_diff( array(
+				QueryWriter::C_SQLSTATE_INTEGRITY_CONSTRAINT_VIOLATION,
+				QueryWriter::C_SQLSTATE_NO_SUCH_COLUMN,
+				QueryWriter::C_SQLSTATE_NO_SUCH_TABLE
+			), $list ) ) !== 3 ) : FALSE;
+	}
+
+	/**
+	 * @see QueryWriter::addIndex
+	 */
+	public function addIndex( $type, $name, $column )
+	{
+		try {
+			$table  = $this->esc( $type );
+			$name   = preg_replace( '/\W/', '', $name );
+			$column = $this->esc( $column );
+			$this->adapter->exec( "CREATE INDEX $name ON $table ($column) " );
+			return TRUE;
+		} catch ( SQLException $e ) {
+			return FALSE;
+		}
+	}
+
+	/**
+	 * @see QueryWriter::addFK
+	 */
+	public function addFK( $type, $targetType, $property, $targetProperty, $isDependent = FALSE )
+	{
+		return $this->buildFK( $type, $targetType, $property, $targetProperty, $isDependent );
+	}
+
+	/**
+	 * @see QueryWriter::wipeAll
+	 */
+	public function wipeAll()
+	{
+		if (AQueryWriter::$noNuke) throw new \Exception('The nuke() command has been disabled using noNuke() or R::feature(novice/...).');
+		foreach ( $this->getTables() as $t ) {
+			foreach ( $this->getKeyMapForType( $t ) as $k ) {
+				$this->adapter->exec( "ALTER TABLE \"$t\" DROP FOREIGN KEY \"{$k['name']}\"" );
+			}
+		}
+		foreach ( $this->getTables() as $t ) {
+			$this->adapter->exec( "DROP TABLE \"$t\"" );
+		}
+	}
+
+	/**
+	 * @see QueryWriter::esc
+	 */
+	public function esc( $dbStructure, $noQuotes = FALSE )
+	{
+		return parent::esc( strtolower( $dbStructure ), $noQuotes );
+	}
+
+	/**
+	 * @see QueryWriter::inferFetchType
+	 */
+	public function inferFetchType( $type, $property )
+	{
+		$table = $this->esc( $type, TRUE );
+		$field = $this->esc( $property, TRUE ) . '_id';
+		$keys = $this->getKeyMapForType( $table );
+
+		foreach( $keys as $key ) {
+			if (
+				$key['from'] === $field
+			) return $key['table'];
+		}
+		return NULL;
 	}
 }
 }
@@ -7233,6 +7929,39 @@ abstract class Repository
 	}
 
 	/**
+	 * Dispenses a new bean (a OODBBean Bean Object)
+	 * of the specified type. Always
+	 * use this function to get an empty bean object. Never
+	 * instantiate a OODBBean yourself because it needs
+	 * to be configured before you can use it with RedBean. This
+	 * function applies the appropriate initialization /
+	 * configuration for you.
+	 *
+	 * To use a different class for beans (instead of OODBBean) set:
+	 * REDBEAN_OODBBEAN_CLASS to the name of the class to be used.
+	 *
+	 * @param string  $type              type of bean you want to dispense
+	 * @param int     $number            number of beans you would like to get
+	 * @param boolean $alwaysReturnArray if TRUE always returns the result as an array
+	 *
+	 * @return OODBBean
+	 */
+	public function dispense( $type, $number = 1, $alwaysReturnArray = FALSE )
+	{
+		$OODBBEAN = defined( 'REDBEAN_OODBBEAN_CLASS' ) ? REDBEAN_OODBBEAN_CLASS : '\RedBeanPHP\OODBBean';
+		$beans = array();
+		for ( $i = 0; $i < $number; $i++ ) {
+			$bean = new $OODBBEAN;
+			$bean->initializeForDispense( $type, $this->oodb->getBeanHelper() );
+			$this->check( $bean );
+			$this->oodb->signal( 'dispense', $bean );
+			$beans[] = $bean;
+		}
+
+		return ( count( $beans ) === 1 && !$alwaysReturnArray ) ? array_pop( $beans ) : $beans;
+	}
+
+	/**
 	 * Searches the database for a bean that matches conditions $conditions and sql $addSQL
 	 * and returns an array containing all the beans that have been found.
 	 *
@@ -7454,17 +8183,12 @@ abstract class Repository
 		}
 
 		try {
-			return (int) $this->writer->queryRecordCount( $type, array(), $addSQL, $bindings );
+			$count = (int) $this->writer->queryRecordCount( $type, array(), $addSQL, $bindings );
 		} catch ( SQLException $exception ) {
-			if ( !$this->writer->sqlStateIn( $exception->getSQLState(), array(
-				 QueryWriter::C_SQLSTATE_NO_SUCH_TABLE,
-				 QueryWriter::C_SQLSTATE_NO_SUCH_COLUMN ),
-				 $exception->getDriverDetails() ) ) {
-				throw $exception;
-			}
+			$this->handleException( $exception );
+			$count = 0;
 		}
-
-		return 0;
+		return $count;
 	}
 
 	/**
@@ -7492,12 +8216,13 @@ abstract class Repository
 			}
 		}
 		try {
-			$this->writer->deleteRecord( $bean->getMeta( 'type' ), array( 'id' => array( $bean->id ) ), NULL );
+			$deleted = $this->writer->deleteRecord( $bean->getMeta( 'type' ), array( 'id' => array( $bean->id ) ), NULL );
 		} catch ( SQLException $exception ) {
 			$this->handleException( $exception );
 		}
 		$bean->id = 0;
 		$this->oodb->signal( 'after_delete', $bean );
+		return isset($deleted) ? $deleted : 0;
 	}
 
 	/**
@@ -7805,36 +8530,6 @@ class Fluid extends Repository
 	}
 
 	/**
-	 * Dispenses a new bean (a OODBBean Bean Object)
-	 * of the specified type. Always
-	 * use this function to get an empty bean object. Never
-	 * instantiate a OODBBean yourself because it needs
-	 * to be configured before you can use it with RedBean. This
-	 * function applies the appropriate initialization /
-	 * configuration for you.
-	 *
-	 * @param string  $type              type of bean you want to dispense
-	 * @param string  $number            number of beans you would like to get
-	 * @param boolean $alwaysReturnArray if TRUE always returns the result as an array
-	 *
-	 * @return OODBBean
-	 */
-	public function dispense( $type, $number = 1, $alwaysReturnArray = FALSE )
-	{
-		$OODBBEAN = defined( 'REDBEAN_OODBBEAN_CLASS' ) ? REDBEAN_OODBBEAN_CLASS : '\RedBeanPHP\OODBBean';
-		$beans = array();
-		for ( $i = 0; $i < $number; $i++ ) {
-			$bean = new $OODBBEAN;
-			$bean->initializeForDispense( $type, $this->oodb->getBeanHelper() );
-			$this->check( $bean );
-			$this->oodb->signal( 'dispense', $bean );
-			$beans[] = $bean;
-		}
-
-		return ( count( $beans ) === 1 && !$alwaysReturnArray ) ? array_pop( $beans ) : $beans;
-	}
-
-	/**
 	 * Loads a bean from the object database.
 	 * It searches for a OODBBean Bean Object in the
 	 * database. It does not matter how this bean has been stored.
@@ -8024,36 +8719,6 @@ class Frozen extends Repository
 				throw new RedException( 'Array may only contain OODBBeans' );
 			}
 		}
-	}
-
-	/**
-	 * Dispenses a new bean (a OODBBean Bean Object)
-	 * of the specified type. Always
-	 * use this function to get an empty bean object. Never
-	 * instantiate a OODBBean yourself because it needs
-	 * to be configured before you can use it with RedBean. This
-	 * function applies the appropriate initialization /
-	 * configuration for you.
-	 *
-	 * @param string  $type              type of bean you want to dispense
-	 * @param int  $number            number of beans you would like to get
-	 * @param boolean $alwaysReturnArray if TRUE always returns the result as an array
-	 *
-	 * @return OODBBean
-	 */
-	public function dispense( $type, $number = 1, $alwaysReturnArray = FALSE )
-	{
-		$OODBBEAN = defined( 'REDBEAN_OODBBEAN_CLASS' ) ? REDBEAN_OODBBEAN_CLASS : '\RedBeanPHP\OODBBean';
-		$beans = array();
-		for ( $i = 0; $i < $number; $i++ ) {
-			/** @var \RedBeanPHP\OODBBean $bean */
-			$bean = new $OODBBEAN;
-			$bean->initializeForDispense( $type, $this->oodb->getBeanHelper() );
-			$this->oodb->signal( 'dispense', $bean );
-			$beans[] = $bean;
-		}
-
-		return ( count( $beans ) === 1 && !$alwaysReturnArray ) ? array_pop( $beans ) : $beans;
 	}
 
 	/**
@@ -8442,7 +9107,7 @@ class OODB extends Observable
 	 * @param string $sql      SQL to be used in query
 	 * @param array  $bindings a list of values to bind to query parameters
 	 *
-	 * @return array
+	 * @return BeanCollection
 	 */
 	public function findCollection(  $type, $sql = NULL, $bindings = array() )
 	{
@@ -8888,6 +9553,90 @@ class Finder
 	}
 
 	/**
+	 * A custom record-to-bean mapping function for findMulti.
+	 *
+	 * Usage:
+	 *
+	 * <code>
+	 * $collection = R::findMulti( 'shop,product,price',
+	 * 'SELECT shop.*, product.*, price.* FROM shop
+	 *	LEFT JOIN product ON product.shop_id = shop.id
+	 *	LEFT JOIN price ON price.product_id = product.id', [], [
+	 *		Finder::map( 'shop', 'product' ),
+	 *		Finder::map( 'product', 'price' ),
+	 *	]);
+	 * </code>
+	 *
+	 * @param string $parentName name of the parent bean
+	 * @param string $childName  name of the child bean
+	 *
+	 * @return array
+	 */
+	public static function map($parentName,$childName) {
+		return array(
+			'a' => $parentName,
+			'b' => $childName,
+			'matcher' => function( $parent, $child ) use ( $parentName, $childName ) {
+				$propertyName = 'own' . ucfirst( $childName );
+				if (!isset($parent[$propertyName])) {
+					$parent->noLoad()->{$propertyName} = array();
+				}
+				$property = "{$parentName}ID";
+				return ( $child->$property == $parent->id );
+			},
+			'do' => function( $parent, $child ) use ( $childName ) {
+				$list = 'own'.ucfirst( $childName ).'List';
+				$parent->noLoad()->{$list}[$child->id] = $child;
+			}
+		);
+	}
+
+	/**
+	* A custom record-to-bean mapping function for findMulti.
+	*
+	* Usage:
+	*
+	* <code>
+	* $collection = R::findMulti( 'book,book_tag,tag',
+	* 'SELECT book.*, book_tag.*, tag.* FROM book
+	*      LEFT JOIN book_tag ON book_tag.book_id = book.id
+	*      LEFT JOIN tag ON book_tag.tag_id = tag.id', [], [
+	*              Finder::nmMap( 'book', 'tag' ),
+	*      ]);
+	* </code>
+	*
+	* @param string $parentName name of the parent bean
+	* @param string $childName  name of the child bean
+	*
+	* @return array
+	*/
+	public static function nmMap( $parentName, $childName )
+	{
+		$types = array($parentName, $childName);
+		sort( $types );
+		$link = implode( '_', $types );
+		return array(
+			'a' => $parentName,
+			'b' => $childName,
+			'matcher' => function( $parent, $child, $beans ) use ( $parentName, $childName, $link ) {
+				$propertyName = 'shared' . ucfirst( $childName );
+				if (!isset($parent[$propertyName])) {
+					$parent->noLoad()->{$propertyName} = array();
+				}
+				foreach( $beans[$link] as $linkBean ) {
+					if ( $linkBean["{$parentName}ID"] == $parent->id && $linkBean["{$childName}ID"] == $child->id ) {
+						return true;
+					}
+				}
+			},
+			'do' => function( $parent, $child ) use ( $childName ) {
+				$list = 'shared'.ucfirst( $childName ).'List';
+				$parent->noLoad()->{$list}[$child->id] = $child;
+			}
+		);
+	}
+
+	/**
 	 * Finds a bean using a type and a where clause (SQL).
 	 * As with most Query tools in RedBean you can provide values to
 	 * be inserted in the SQL statement by populating the value
@@ -9077,12 +9826,13 @@ class Finder
 	 * @param string $type       type of bean to search for
 	 * @param array  $conditions criteria set describing the bean to search for
 	 * @param string $sql        additional SQL (for sorting)
+	 * @param array  $bindings   bindings
 	 *
 	 * @return array
 	 */
-	public function findLike( $type, $conditions = array(), $sql = '' )
+	public function findLike( $type, $conditions = array(), $sql = '', $bindings = array() )
 	{
-		return $this->redbean->find( $type, $conditions, $sql );
+		return $this->redbean->find( $type, $conditions, $sql, $bindings );
 	}
 
 	/**
@@ -9150,63 +9900,70 @@ class Finder
 	 * @note instead of an SQL query you can pass a result array as well.
 	 *
 	 * @param string|array $types         a list of types (either array or comma separated string)
-	 * @param string|array $sql           an SQL query or an array of prefetched records
+	 * @param string|array $sql           optional, an SQL query or an array of prefetched records
 	 * @param array        $bindings      optional, bindings for SQL query
 	 * @param array        $remappings    optional, an array of remapping arrays
 	 * @param string       $queryTemplate optional, query template
 	 *
 	 * @return array
 	 */
-	public function findMulti( $types, $sql, $bindings = array(), $remappings = array(), $queryTemplate = ' %s.%s AS %s__%s' )
+	public function findMulti( $types, $sql = NULL, $bindings = array(), $remappings = array(), $queryTemplate = ' %s.%s AS %s__%s' )
 	{
-		if ( !is_array( $types ) ) $types = explode( ',', $types );
-		if ( !is_array( $sql ) ) {
-			$writer = $this->toolbox->getWriter();
-			$adapter = $this->toolbox->getDatabaseAdapter();
-
-			//Repair the query, replace book.* with book.id AS book_id etc..
-			foreach( $types as $type ) {
-				$pattern = " {$type}.*";
-				if ( strpos( $sql, $pattern ) !== FALSE ) {
-					$newSelectorArray = array();
-					$columns = $writer->getColumns( $type );
-					foreach( $columns as $column => $definition ) {
-						$newSelectorArray[] = sprintf( $queryTemplate, $type, $column, $type, $column );
-					}
-					$newSelector = implode( ',', $newSelectorArray );
-					$sql = str_replace( $pattern, $newSelector, $sql );
-				}
-			}
-
-			$rows = $adapter->get( $sql, $bindings );
+		if ( !is_array( $types ) ) $types = array_map( 'trim', explode( ',', $types ) );
+		if ( is_null( $sql ) ) {
+			$beans = array();
+			foreach( $types as $type ) $beans[$type] = $this->redbean->find( $type );
 		} else {
-			$rows = $sql;
-		}
+			if ( !is_array( $sql ) ) {
+				$writer = $this->toolbox->getWriter();
+				$adapter = $this->toolbox->getDatabaseAdapter();
 
-		//Gather the bean data from the query results using the prefix
-		$wannaBeans = array();
-		foreach( $types as $type ) {
-			$wannaBeans[$type] = array();
-			$prefix            = "{$type}__";
-			foreach( $rows as $rowkey=>$row ) {
-				$wannaBean = array();
-				foreach( $row as $cell => $value ) {
-					if ( strpos( $cell, $prefix ) === 0 ) {
-						$property = substr( $cell, strlen( $prefix ) );
-						unset( $rows[$rowkey][$cell] );
-						$wannaBean[$property] = $value;
+				//Repair the query, replace book.* with book.id AS book_id etc..
+				foreach( $types as $type ) {
+					$regex = "#( (`?{$type}`?)\.\*)#";
+					if ( preg_match( $regex, $sql, $matches ) ) {
+						$pattern = $matches[1];
+						$table = $matches[2];
+						$newSelectorArray = array();
+						$columns = $writer->getColumns( $type );
+						foreach( $columns as $column => $definition ) {
+							$newSelectorArray[] = sprintf( $queryTemplate, $table, $column, $type, $column );
+						}
+						$newSelector = implode( ',', $newSelectorArray );
+						$sql = str_replace( $pattern, $newSelector, $sql );
 					}
 				}
-				if ( !isset( $wannaBean['id'] ) ) continue;
-				if ( is_null( $wannaBean['id'] ) ) continue;
-				$wannaBeans[$type][$wannaBean['id']] = $wannaBean;
-			}
-		}
 
-		//Turn the rows into beans
-		$beans = array();
-		foreach( $wannaBeans as $type => $wannabees ) {
-			$beans[$type] = $this->redbean->convertToBeans( $type, $wannabees );
+				$rows = $adapter->get( $sql, $bindings );
+			} else {
+				$rows = $sql;
+			}
+
+			//Gather the bean data from the query results using the prefix
+			$wannaBeans = array();
+			foreach( $types as $type ) {
+				$wannaBeans[$type] = array();
+				$prefix            = "{$type}__";
+				foreach( $rows as $rowkey=>$row ) {
+					$wannaBean = array();
+					foreach( $row as $cell => $value ) {
+						if ( strpos( $cell, $prefix ) === 0 ) {
+							$property = substr( $cell, strlen( $prefix ) );
+							unset( $rows[$rowkey][$cell] );
+							$wannaBean[$property] = $value;
+						}
+					}
+					if ( !isset( $wannaBean['id'] ) ) continue;
+					if ( is_null( $wannaBean['id'] ) ) continue;
+					$wannaBeans[$type][$wannaBean['id']] = $wannaBean;
+				}
+			}
+
+			//Turn the rows into beans
+			$beans = array();
+			foreach( $wannaBeans as $type => $wannabees ) {
+				$beans[$type] = $this->redbean->convertToBeans( $type, $wannabees );
+			}
 		}
 
 		//Apply additional re-mappings
@@ -9502,6 +10259,9 @@ class AssociationManager extends Observable
 					$type2 = $bean2->getMeta( 'type' );
 
 					$row      = $this->writer->queryRecordLink( $type1, $type2, $bean1->id, $bean2->id );
+
+					if ( !$row ) return;
+
 					$linkType = $this->getTable( array( $type1, $type2 ) );
 
 					if ( $fast ) {
@@ -9638,40 +10398,6 @@ interface BeanHelper
 	/**
 	 * Given a certain bean this method will
 	 * return the corresponding model.
-	 * If no model is returned (NULL), RedBeanPHP might ask again.
-	 *
-	 * @note You can make RedBeanPHP faster by doing the setup wiring yourself.
-	 * The event listeners take time, so to speed-up RedBeanPHP you can
-	 * drop 'FUSE', if you're not interested in the Models.
-	 *
-	 * @note You can do funny stuff with this method but please be careful.
-	 * You *could* create a model depending on properties of the bean, but
-	 * it's a bit well... adventurous, here is an example:
-	 *
-	 * <code>
-	 * class Book extends RedBeanPHP\SimpleModel {};
-	 * class Booklet extends RedBeanPHP\SimpleModel {};
-	 *
-	 * class FlexBeanHelper extends RedBeanPHP\BeanHelper\SimpleFacadeBeanHelper {
-	 *  public function getModelForBean( RedBeanPHP\OODBBean $bean ) {
-	 *   if (!isset($bean->pages)) return NULL; //will ask again
-	 *   if ($bean->pages <= 10) return new Booklet;
-	 *   return new Book;
-	 *	 }
-	 * }
-	 *
-	 * $h = new FlexBeanHelper;
-	 * R::getRedBean()->setBeanHelper($h);
-	 * $book = R::dispense('book');
-	 * var_dump($book->box()); //NULL cant reach model
-	 * $book->pages = 5;
-	 * var_dump($book->box()); //Booklet
-	 * $book->pages = 15;
-	 * var_dump($book->box()); //still.. Booklet, model has been set
-	 * $book2 = R::dispense('book');
-	 * $book2->pages = 15;
-	 * var_dump($book2->box()); //Book, more than 10 pages
-	 * </code>
 	 *
 	 * @param OODBBean $bean bean to obtain the corresponding model of
 	 *
@@ -10319,6 +11045,42 @@ class TagManager
 
 		return $this->redbean->convertToBeans( $beanType, $records );
 	}
+
+	/**
+	 * Like taggedAll() but only counts.
+	 *
+	 * @see taggedAll
+	 *
+	 * @param string       $beanType type of bean you are looking for
+	 * @param array|string $tagList  list of tags to match
+	 * @param string       $sql      additional sql snippet
+	 * @param array        $bindings bindings
+	 *
+	 * @return integer
+	 */
+	public function countTaggedAll( $beanType, $tagList, $sql = '', $bindings = array() )
+	{
+		$tags  = $this->extractTagsIfNeeded( $tagList );
+		return $this->toolbox->getWriter()->queryCountTagged( $beanType, $tags, TRUE, $sql, $bindings );
+	}
+
+	/**
+	 * Like tagged() but only counts.
+	 *
+	 * @see tagged
+	 *
+	 * @param string       $beanType type of bean you are looking for
+	 * @param array|string $tagList  list of tags to match
+	 * @param string       $sql      additional sql snippet
+	 * @param array        $bindings bindings
+	 *
+	 * @return integer
+	 */
+	public function countTagged( $beanType, $tagList, $sql = '', $bindings = array() )
+	{
+		$tags  = $this->extractTagsIfNeeded( $tagList );
+		return $this->toolbox->getWriter()->queryCountTagged( $beanType, $tags, FALSE, $sql, $bindings );
+	}
 }
 }
 
@@ -10526,12 +11288,14 @@ use RedBeanPHP\Util\QuickExport as QuickExport;
 use RedBeanPHP\Util\MatchUp as MatchUp;
 use RedBeanPHP\Util\Look as Look;
 use RedBeanPHP\Util\Diff as Diff;
+use RedBeanPHP\Util\Tree as Tree;
+use RedBeanPHP\Util\Feature;
 
 /**
  * RedBean Facade
  *
  * Version Information
- * RedBean Version @version 5.1
+ * RedBean Version @version 5.4
  *
  * This class hides the object landscape of
  * RedBeanPHP behind a single letter class providing
@@ -10551,7 +11315,7 @@ class Facade
 	/**
 	 * RedBeanPHP version constant.
 	 */
-	const C_REDBEANPHP_VERSION = '5.1';
+	const C_REDBEANPHP_VERSION = '5.4';
 
 	/**
 	 * @var ToolBox
@@ -10599,6 +11363,11 @@ class Facade
 	private static $finder;
 
 	/**
+	 * @var Tree
+	 */
+	private static $tree;
+
+	/**
 	 * @var Logger
 	 */
 	private static $logger;
@@ -10612,6 +11381,16 @@ class Facade
 	 * @var string
 	 */
 	private static $exportCaseStyle = 'default';
+
+	/**
+	 * @var flag allows transactions through facade in fluid mode
+	 */
+	private static $allowFluidTransactions = FALSE;
+
+	/**
+	 * @var flag allows to unfreeze if needed with store(all)
+	 */
+	private static $allowHybridMode = FALSE;
 
 	/**
 	 * Not in use (backward compatibility SQLHelper)
@@ -10661,6 +11440,22 @@ class Facade
 		} else {
 			return Facade::$adapter->$method( $sql, $bindings );
 		}
+	}
+
+	/**
+	 * Sets allow hybrid mode flag. In Hybrid mode (default off),
+	 * store/storeAll take an extra argument to switch to fluid
+	 * mode in case of an exception. You can use this to speed up
+	 * fluid mode. This method returns the previous value of the
+	 * flag.
+	 *
+	 * @param boolean $hybrid
+	 */
+	public static function setAllowHybridMode( $hybrid )
+	{
+		$old = self::$allowHybridMode;
+		self::$allowHybridMode = $hybrid;
+		return $old;
 	}
 
 	/**
@@ -10729,13 +11524,13 @@ class Facade
 	 *
 	 * @return ToolBox
 	 */
-	public static function setup( $dsn = NULL, $username = NULL, $password = NULL, $frozen = FALSE )
+	public static function setup( $dsn = NULL, $username = NULL, $password = NULL, $frozen = FALSE, $partialBeans = FALSE )
 	{
 		if ( is_null( $dsn ) ) {
 			$dsn = 'sqlite:/' . sys_get_temp_dir() . '/red.db';
 		}
 
-		self::addDatabase( 'default', $dsn, $username, $password, $frozen );
+		self::addDatabase( 'default', $dsn, $username, $password, $frozen, $partialBeans );
 		self::selectDatabase( 'default' );
 
 		return self::$toolbox;
@@ -10769,6 +11564,41 @@ class Facade
 	public static function setNarrowFieldMode( $mode )
 	{
 		AQueryWriter::setNarrowFieldMode( $mode );
+	}
+
+	/**
+	 * Toggles fluid transactions. By default fluid transactions
+	 * are not active. Starting, committing or rolling back a transaction
+	 * through the facade in fluid mode will have no effect. If you wish
+	 * to replace this standard portable behavor with behavior depending
+	 * on how the used database platform handles fluid (DDL) transactions
+	 * set this flag to TRUE.
+	 *
+	 * @param boolean $mode allow fluid transaction mode
+	 *
+	 * @return void
+	 */
+	public static function setAllowFluidTransactions( $mode )
+	{
+		self::$allowFluidTransactions = $mode;
+	}
+
+	/**
+	 * Toggles support for IS-NULL-conditions.
+	 * If IS-NULL-conditions are enabled condition arrays
+	 * for functions including findLike() are treated so that
+	 * 'field' => NULL will be interpreted as field IS NULL
+	 * instead of being skipped. Returns the previous
+	 * value of the flag.
+	 *
+	 * @param boolean $flag TRUE or FALSE
+	 *
+	 * @return boolean
+	 */
+	public static function useISNULLConditions( $mode )
+	{
+		self::getWriter()->flushCache(); /* otherwise same queries might fail (see Unit test XNull) */
+		return AQueryWriter::useISNULLConditions( $mode );
 	}
 
 	/**
@@ -10828,7 +11658,7 @@ class Facade
 	 *
 	 * @return void
 	 */
-	public static function addDatabase( $key, $dsn, $user = NULL, $pass = NULL, $frozen = FALSE )
+	public static function addDatabase( $key, $dsn, $user = NULL, $pass = NULL, $frozen = FALSE, $partialBeans = FALSE )
 	{
 		if ( isset( self::$toolboxes[$key] ) ) {
 			throw new RedException( 'A database has already been specified for this key.' );
@@ -10861,7 +11691,26 @@ class Facade
 		$writer      = new $writerClass( $adapter );
 		$redbean     = new OODB( $writer, $frozen );
 
+		if ( $partialBeans ) {
+			$redbean->getCurrentRepository()->usePartialBeans( $partialBeans );
+		}
+
 		self::$toolboxes[$key] = new ToolBox( $redbean, $adapter, $writer );
+	}
+
+	/**
+	 * Sets PDO attributes for MySQL SSL connection.
+	 *
+	 * @param string $key  path client key i.e. '/etc/mysql/ssl/client-key.pem'
+	 * @param string $cert path client cert i.e. '/etc/mysql/ssl/client-cert.pem'
+	 * @param string $ca   path certifying agent certificate '/etc/mysql/ssl/ca-cert.pem'
+	 * @param string $id   apply to toolbox (default = 'default')
+	 */
+	public static function useMysqlSSL( $key, $cert, $ca, $id = 'default' ) {
+		$pdo = self::$toolboxes[$id]->getDatabaseAdapter()->getDatabase()->getPDO();
+		$pdo->setAttribute( \PDO::MYSQL_ATTR_SSL_KEY,  $key);
+		$pdo->setAttribute( \PDO::MYSQL_ATTR_SSL_CERT,  $cert);
+		$pdo->setAttribute( \PDO::MYSQL_ATTR_SSL_CA,  $ca);
 	}
 
 	/**
@@ -10892,9 +11741,9 @@ class Facade
 	 *
 	 * @return boolean
 	 */
-	public static function selectDatabase( $key )
+	public static function selectDatabase( $key, $force = FALSE )
 	{
-		if ( self::$currentDB === $key ) {
+		if ( self::$currentDB === $key && !$force ) {
 			return FALSE;
 		}
 
@@ -11019,13 +11868,29 @@ class Facade
 	 * key ID $id assigned by the database. We can now use this
 	 * ID to load the bean from the database again and delete it.
 	 *
-	 * @param OODBBean|SimpleModel $bean bean to store
+	 * If the second parameter is set to TRUE and
+	 * Hybrid mode is allowed (default OFF for novice), then RedBeanPHP
+	 * will automatically temporarily switch to fluid mode to attempt to store the
+	 * bean in case of an SQLException.
+	 *
+	 * @param OODBBean|SimpleModel $bean             bean to store
+	 * @param boolean              $unfreezeIfNeeded retries in fluid mode in hybrid mode
 	 *
 	 * @return integer|string
 	 */
-	public static function store( $bean )
+	public static function store( $bean, $unfreezeIfNeeded = FALSE )
 	{
-		return self::$redbean->store( $bean );
+		$result = NULL;
+		try {
+			$result = self::$redbean->store( $bean );
+		} catch (SQLException $exception) {
+			$wasFrozen = self::$redbean->isFrozen();
+			if ( !self::$allowHybridMode || !$unfreezeIfNeeded ) throw $exception;
+			self::freeze( FALSE );
+			$result = self::$redbean->store( $bean );
+			self::freeze( $wasFrozen );
+		}
+		return $result;
 	}
 
 	/**
@@ -11139,6 +12004,35 @@ class Facade
 	}
 
 	/**
+	 * Same as find(), but selects the beans for update, thus locking the beans.
+	 * This equals an SQL query like 'SELECT ... FROM ... FOR UPDATE'.
+	 * Use this method if you want to load a bean you intend to UPDATE.
+	 * This method should be used to 'LOCK a bean'.
+	 *
+	 * Usage:
+	 *
+	 * <code>
+	 * $bean = R::findForUpdate(
+	 *    'bean',
+	 *    ' title LIKE ? ',
+	 *    array('title')
+	 * );
+	 * ...update...
+	 * R::store( $bean );
+	 * </code>
+	 *
+	 * @param string $type     the type of bean you are looking for
+	 * @param string $sql      SQL query to find the desired bean, starting right after WHERE clause
+	 * @param array  $bindings array of values to be bound to parameters in query
+	 *
+	 * @return OODBBean
+	 */
+	public static function findForUpdate( $type, $sql, $bindings = array() )
+	{
+		return self::find( $type, $sql, $bindings, AQueryWriter::C_SELECT_SNIPPET_FOR_UPDATE );
+	}
+
+	/**
 	 * Removes a bean from the database.
 	 * This function will remove the specified OODBBean
 	 * Bean Object from the database.
@@ -11207,11 +12101,11 @@ class Facade
 	 *
 	 * <code>
 	 *  $book = R::dispense( [
-     *   '_type' => 'book',
-     *   'title'  => 'Gifted Programmers',
-     *   'author' => [ '_type' => 'author', 'name' => 'Xavier' ],
-     *   'ownPageList' => [ ['_type'=>'page', 'text' => '...'] ]
-     * ] );
+	 *   '_type' => 'book',
+	 *   'title'  => 'Gifted Programmers',
+	 *   'author' => [ '_type' => 'author', 'name' => 'Xavier' ],
+	 *   'ownPageList' => [ ['_type'=>'page', 'text' => '...'] ]
+	 * ] );
 	 * </code>
 	 *
 	 * @param string|array $typeOrBeanArray   type or bean array to import
@@ -11292,30 +12186,29 @@ class Facade
 	}
 
 	/**
-	 * Finds a bean using a type and a where clause (SQL).
+	 * Finds beans using a type and optional SQL statement.
 	 * As with most Query tools in RedBean you can provide values to
 	 * be inserted in the SQL statement by populating the value
 	 * array parameter; you can either use the question mark notation
 	 * or the slot-notation (:keyname).
 	 *
+	 * Your SQL does not have to start with a WHERE-clause condition.
+	 *
 	 * @param string $type     the type of bean you are looking for
 	 * @param string $sql      SQL query to find the desired bean, starting right after WHERE clause
 	 * @param array  $bindings array of values to be bound to parameters in query
+	 * @param string $snippet  SQL snippet to include in query (for example: FOR UPDATE)
 	 *
 	 * @return array
 	 */
-	public static function find( $type, $sql = NULL, $bindings = array() )
+	public static function find( $type, $sql = NULL, $bindings = array(), $snippet = NULL )
 	{
+		if ( $snippet !== NULL ) self::$writer->setSQLSelectSnippet( $snippet );
 		return self::$finder->find( $type, $sql, $bindings );
 	}
 
 	/**
-	 * The findAll() method differs from the find() method in that it does
-	 * not assume a WHERE-clause, so this is valid:
-	 *
-	 * R::findAll('person',' ORDER BY name DESC ');
-	 *
-	 * Your SQL does not have to start with a valid WHERE-clause condition.
+	 * Alias for find().
 	 *
 	 * @param string $type     the type of bean you are looking for
 	 * @param string $sql      SQL query to find the desired bean, starting right after WHERE clause
@@ -11566,6 +12459,23 @@ class Facade
 	 * database adapter. This method allows you to directly query the
 	 * database without having to obtain an database adapter instance first.
 	 * Executes the specified SQL query together with the specified
+	 * parameter bindings and returns a PDOCursor instance.
+	 *
+	 * @param string $sql      SQL query to execute
+	 * @param array  $bindings a list of values to be bound to query parameters
+	 *
+	 * @return RedBeanPHP\Cursor\PDOCursor
+	 */
+	public static function getCursor( $sql, $bindings = array() )
+	{
+		return self::query( 'getCursor', $sql, $bindings );
+	}
+
+	/**
+	 * Convenience function to fire an SQL query using the RedBeanPHP
+	 * database adapter. This method allows you to directly query the
+	 * database without having to obtain an database adapter instance first.
+	 * Executes the specified SQL query together with the specified
 	 * parameter bindings and returns a single row.
 	 *
 	 * @param string $sql      SQL query to execute
@@ -11799,10 +12709,11 @@ class Facade
 	 * @param array  $row       one row from the database
 	 * @param string $metamask  metamask (see convertToBeans)
 	 *
-	 * @return RedBeanPHP\OODBBean
+	 * @return OODBBean|NULL
 	 */
 	public static function convertToBean( $type, $row, $metamask = NULL )
 	{
+		if ( !count( $row ) ) return NULL;
 		$beans = self::$redbean->convertToBeans( $type, array( $row ), $metamask );
 		$bean  = reset( $beans );
 		return $bean;
@@ -11991,6 +12902,40 @@ class Facade
 	}
 
 	/**
+	 * Same as taggedAll() but counts beans only (does not return beans).
+	 *
+	 * @see R::taggedAll
+	 *
+	 * @param string       $beanType type of bean you are looking for
+	 * @param array|string $tagList  list of tags to match
+	 * @param string       $sql      additional sql snippet
+	 * @param array        $bindings bindings
+	 *
+	 * @return integer
+	 */
+	public static function countTaggedAll( $beanType, $tagList, $sql = '', $bindings = array() )
+	{
+		return self::$tagManager->countTaggedAll( $beanType, $tagList, $sql, $bindings );
+	}
+
+	/**
+	 * Same as tagged() but counts beans only (does not return beans).
+	 *
+	 * @see R::tagged
+	 *
+	 * @param string       $beanType type of bean you are looking for
+	 * @param array|string $tagList  list of tags to match
+	 * @param string       $sql      additional sql snippet
+	 * @param array        $bindings bindings
+	 *
+	 * @return integer
+	 */
+	public static function countTagged( $beanType, $tagList, $sql = '', $bindings = array() )
+	{
+		return self::$tagManager->countTagged( $beanType, $tagList, $sql, $bindings );
+	}
+
+	/**
 	 * Wipes all beans of type $beanType.
 	 *
 	 * @param string $beanType type of bean you want to destroy entirely
@@ -12036,11 +12981,14 @@ class Facade
 		self::$redbean            = self::$toolbox->getRedBean();
 		self::$finder             = new Finder( self::$toolbox );
 		self::$associationManager = new AssociationManager( self::$toolbox );
+		self::$tree               = new Tree( self::$toolbox );
 		self::$redbean->setAssociationManager( self::$associationManager );
 		self::$labelMaker         = new LabelMaker( self::$toolbox );
 		$helper                   = new SimpleModelHelper();
 		$helper->attachEventListeners( self::$redbean );
-		self::$redbean->setBeanHelper( new SimpleFacadeBeanHelper );
+		if (self::$redbean->getBeanHelper() == NULL) {
+			self::$redbean->setBeanHelper( new SimpleFacadeBeanHelper );
+		}
 		self::$duplicationManager = new DuplicationManager( self::$toolbox );
 		self::$tagManager         = new TagManager( self::$toolbox );
 		return $oldTools;
@@ -12071,11 +13019,18 @@ class Facade
 	 * If an exception occurs, the transaction gets rolled back and the database
 	 * will be left 'untouched'.
 	 *
+	 * In fluid mode transactions will be ignored and all queries will
+	 * be executed as-is because database schema changes will automatically
+	 * trigger the transaction system to commit everything in some database
+	 * systems. If you use a database that can handle DDL changes you might wish
+	 * to use setAllowFluidTransactions(TRUE). If you do this, the behavior of
+	 * this function in fluid mode will depend on the database platform used.
+	 *
 	 * @return bool
 	 */
 	public static function begin()
 	{
-		if ( !self::$redbean->isFrozen() ) return FALSE;
+		if ( !self::$allowFluidTransactions && !self::$redbean->isFrozen() ) return FALSE;
 		self::$adapter->startTransaction();
 		return TRUE;
 	}
@@ -12105,11 +13060,18 @@ class Facade
 	 * If an exception occurs, the transaction gets rolled back and the database
 	 * will be left 'untouched'.
 	 *
+	 * In fluid mode transactions will be ignored and all queries will
+	 * be executed as-is because database schema changes will automatically
+	 * trigger the transaction system to commit everything in some database
+	 * systems. If you use a database that can handle DDL changes you might wish
+	 * to use setAllowFluidTransactions(TRUE). If you do this, the behavior of
+	 * this function in fluid mode will depend on the database platform used.
+	 *
 	 * @return bool
 	 */
 	public static function commit()
 	{
-		if ( !self::$redbean->isFrozen() ) return FALSE;
+		if ( !self::$allowFluidTransactions && !self::$redbean->isFrozen() ) return FALSE;
 		self::$adapter->commit();
 		return TRUE;
 	}
@@ -12139,11 +13101,18 @@ class Facade
 	 * If an exception occurs, the transaction gets rolled back and the database
 	 * will be left 'untouched'.
 	 *
+	 * In fluid mode transactions will be ignored and all queries will
+	 * be executed as-is because database schema changes will automatically
+	 * trigger the transaction system to commit everything in some database
+	 * systems. If you use a database that can handle DDL changes you might wish
+	 * to use setAllowFluidTransactions(TRUE). If you do this, the behavior of
+	 * this function in fluid mode will depend on the database platform used.
+	 *
 	 * @return bool
 	 */
 	public static function rollback()
 	{
-		if ( !self::$redbean->isFrozen() ) return FALSE;
+		if ( !self::$allowFluidTransactions && !self::$redbean->isFrozen() ) return FALSE;
 		self::$adapter->rollback();
 		return TRUE;
 	}
@@ -12240,15 +13209,21 @@ class Facade
 	 * function.
 	 * A loop saver.
 	 *
-	 * @param array $beans list of beans to be stored
+	 * If the second parameter is set to TRUE and
+	 * Hybrid mode is allowed (default OFF for novice), then RedBeanPHP
+	 * will automatically temporarily switch to fluid mode to attempt to store the
+	 * bean in case of an SQLException.
+	 *
+	 * @param array   $beans            list of beans to be stored
+	 * @param boolean $unfreezeIfNeeded retries in fluid mode in hybrid mode
 	 *
 	 * @return array
 	 */
-	public static function storeAll( $beans )
+	public static function storeAll( $beans, $unfreezeIfNeeded = FALSE )
 	{
 		$ids = array();
 		foreach ( $beans as $bean ) {
-			$ids[] = self::store( $bean );
+			$ids[] = self::store( $bean, $unfreezeIfNeeded );
 		}
 		return $ids;
 	}
@@ -12264,9 +13239,11 @@ class Facade
 	 */
 	public static function trashAll( $beans )
 	{
+		$numberOfDeletion = 0;
 		foreach ( $beans as $bean ) {
-			self::trash( $bean );
+			$numberOfDeletion += self::trash( $bean );
 		}
+		return $numberOfDeletion;
 	}
 
 	/**
@@ -12299,20 +13276,28 @@ class Facade
 	 *
 	 * Note that while this function accepts just
 	 * a bean type and query snippet, the beans will still be loaded first. This is because
-	 * the function still respects all the FUSE hooks that may have beeb
+	 * the function still respects all the FUSE hooks that may have been
 	 * associated with the domain logic associated with these beans.
 	 * If you really want to delete just records from the database use
 	 * a simple DELETE-FROM SQL query instead.
+	 *
+	 * Returns the number of beans deleted.
 	 *
 	 * @param string $type       bean type to look for in database
 	 * @param string $sqlSnippet an SQL query snippet
 	 * @param array  $bindings   SQL parameter bindings
 	 *
-	 * @return array
+	 * @return int
 	 */
-	public static function hunt( $type, $sqlSnippet, $bindings = array() )
+	public static function hunt( $type, $sqlSnippet = NULL, $bindings = array() )
 	{
-		return self::trashAll( self::find( $type, $sqlSnippet, $bindings ) );
+		$numberOfTrashedBeans = 0;
+		$beans = self::findCollection( $type, $sqlSnippet, $bindings );
+		while( $bean = $beans->next() ) {
+			self::trash( $bean );
+			$numberOfTrashedBeans++;
+		}
+		return $numberOfTrashedBeans;
 	}
 
 	/**
@@ -12787,12 +13772,13 @@ class Facade
 	 * @param string $type type of bean to search for
 	 * @param array  $like optional criteria set describing the bean to search for
 	 * @param string $sql  optional additional SQL for sorting
+	 * @param array  $bindings bindings
 	 *
 	 * @return array
 	 */
-	public static function findLike( $type, $like = array(), $sql = '' )
+	public static function findLike( $type, $like = array(), $sql = '', $bindings = array() )
 	{
-		return self::$finder->findLike( $type, $like, $sql );
+		return self::$finder->findLike( $type, $like, $sql, $bindings );
 	}
 
 	/**
@@ -12970,14 +13956,15 @@ class Facade
 	 * Auto-resolving aliased parent beans is convenient but can
 	 * be slower and can create infinite recursion if you
 	 * used aliases to break cyclic relations in your domain.
+	 * Returns previous value of the flag.
 	 *
 	 * @param boolean $automatic TRUE to enable automatic resolving aliased parents
 	 *
-	 * @return void
+	 * @return boolean
 	 */
 	public static function setAutoResolve( $automatic = TRUE )
 	{
-		OODBBean::setAutoResolve( (boolean) $automatic );
+		return OODBBean::setAutoResolve( (boolean) $automatic );
 	}
 
 	/**
@@ -13001,8 +13988,10 @@ class Facade
 
 	/**
 	 * Exposes the result of the specified SQL query as a CSV file.
+	 *
 	 * Usage:
 	 *
+	 * <code>
 	 * R::csv( 'SELECT
 	 *                 `name`,
 	 *                  population
@@ -13012,6 +14001,7 @@ class Facade
 	 *          array( 'city', 'population' ),
 	 *          '/tmp/cities.csv'
 	 * );
+	 * </code>
 	 *
 	 * The command above will select all cities in Denmark
 	 * and create a CSV with columns 'city' and 'population' and
@@ -13180,6 +14170,60 @@ class Facade
 	}
 
 	/**
+	 * The gentleman's way to register a RedBeanPHP ToolBox instance
+	 * with the facade. Stores the toolbox in the static toolbox
+	 * registry of the facade class. This allows for a neat and
+	 * explicit way to register a toolbox.
+	 *
+	 * @param string  $key     key to store toolbox instance under
+	 * @param ToolBox $toolbox toolbox to register
+	 *
+	 * @return void
+	 */
+	public static function addToolBoxWithKey( $key, ToolBox $toolbox )
+	{
+		self::$toolboxes[$key] = $toolbox;
+	}
+
+	/**
+	 * The gentleman's way to remove a RedBeanPHP ToolBox instance
+	 * from the facade. Removes the toolbox identified by
+	 * the specified key in the static toolbox
+	 * registry of the facade class. This allows for a neat and
+	 * explicit way to remove a toolbox.
+	 * Returns TRUE if the specified toolbox was found and removed.
+	 * Returns FALSE otherwise.
+	 *
+	 * @param string  $key     identifier of the toolbox to remove
+	 *
+	 * @return boolean
+	 */
+	public static function removeToolBoxByKey( $key )
+	{
+		if ( !array_key_exists( $key, self::$toolboxes ) ) {
+			return FALSE;
+		}
+		unset( self::$toolboxes[$key] );
+		return TRUE;
+	}
+
+	/**
+	 * Returns the toolbox associated with the specified key.
+	 *
+	 * @param string  $key     key to store toolbox instance under
+	 * @param ToolBox $toolbox toolbox to register
+	 *
+	 * @return ToolBox|NULL
+	 */
+	public static function getToolBoxByKey( $key )
+	{
+		if ( !array_key_exists( $key, self::$toolboxes ) ) {
+			return NULL;
+		}
+		return self::$toolboxes[$key];
+	}
+
+	/**
 	 * Toggles JSON column features.
 	 * Invoking this method with boolean TRUE causes 2 JSON features to be enabled.
 	 * Beans will automatically JSONify any array that's not in a list property and
@@ -13205,8 +14249,10 @@ class Facade
 	 *
 	 * So invoking this method is the same as:
 	 *
+	 * <code>
 	 * AQueryWriter::useJSONColumns( $flag );
 	 * OODBBean::convertArraysToJSON( $flag );
+	 * </code>
 	 *
 	 * Unlike the methods above, that return the previous state, this
 	 * method does not return anything (void).
@@ -13219,6 +14265,85 @@ class Facade
 	{
 		AQueryWriter::useJSONColumns( $flag );
 		OODBBean::convertArraysToJSON( $flag );
+	}
+
+	/**
+	 * @experimental
+	 *
+	 * Given a bean and an optional SQL snippet,
+	 * this method will return all child beans in a hierarchically structured
+	 * bean table.
+	 *
+	 * @note that not all database support this functionality. You'll need
+	 * at least MariaDB 10.2.2 or Postgres. This method does not include
+	 * a warning mechanism in case your database does not support this
+	 * functionality.
+	 *
+	 * @note that this functionality is considered 'experimental'.
+	 * It may still contain bugs.
+	 *
+	 * @param OODBBean $bean     bean to find children of
+	 * @param string   $sql      optional SQL snippet
+	 * @param array    $bindings SQL snippet parameter bindings
+	 */
+	public static function children( OODBBean $bean, $sql = NULL, $bindings = array() )
+	{
+		return self::$tree->children( $bean, $sql, $bindings );
+	}
+
+	/**
+	 * @experimental
+	 *
+	 * Given a bean and an optional SQL snippet,
+	 * this method will return all parent beans in a hierarchically structured
+	 * bean table.
+	 *
+	 * @note that not all database support this functionality. You'll need
+	 * at least MariaDB 10.2.2 or Postgres. This method does not include
+	 * a warning mechanism in case your database does not support this
+	 * functionality.
+	 *
+	 * @note that this functionality is considered 'experimental'.
+	 * It may still contain bugs.
+	 *
+	 * @param OODBBean $bean     bean to find parents of
+	 * @param string   $sql      optional SQL snippet
+	 * @param array    $bindings SQL snippet parameter bindings
+	 */
+	public static function parents( OODBBean $bean, $sql = NULL, $bindings = array() )
+	{
+		return self::$tree->parents( $bean, $sql, $bindings );
+	}
+
+	/**
+	 * Toggles support for nuke().
+	 * Can be used to turn off the nuke() feature for security reasons.
+	 * Returns the old flag value.
+	 *
+	 * @param boolean $flag TRUE or FALSE
+	 *
+	 * @return boolean
+	 */
+	public static function noNuke( $yesNo ) {
+		return AQueryWriter::forbidNuke( $yesNo );
+	}
+
+	/**
+	 * Selects the feature set you want as specified by
+	 * the label.
+	 *
+	 * Usage:
+	 *
+	 * <code>
+	 * R::useFeatureSet( 'novice/latest' );
+	 * </code>
+	 *
+	 * @param string $label label
+	 *
+	 * @return void
+	 */
+	public static function useFeatureSet( $label ) {
+		return Feature::feature($label);
 	}
 
 	/**
@@ -13749,7 +14874,7 @@ use RedBeanPHP\RedException as RedException;
  *
  * This is a helper or service class containing frequently used
  * array functions for dealing with SQL queries.
- * 
+ *
  * @file    RedBeanPHP/Util/ArrayTool.php
  * @author  Gabor de Mooij and the RedBeanPHP Community
  * @license BSD/GPLv2
@@ -13813,7 +14938,7 @@ class ArrayTool
 	 * @return array
 	 */
 	public static function flat( $array, $result = array() )
-	{		
+	{
 		foreach( $array as $value ) {
 			if ( is_array( $value ) ) $result = self::flat( $value, $result );
 			else $result[] = $value;
@@ -13934,11 +15059,11 @@ class DispenseHelper
 	 *
 	 * <code>
 	 *  $book = R::dispense( [
-     *   '_type' => 'book',
-     *   'title'  => 'Gifted Programmers',
-     *   'author' => [ '_type' => 'author', 'name' => 'Xavier' ],
-     *   'ownPageList' => [ ['_type'=>'page', 'text' => '...'] ]
-     * ] );
+	 *   '_type' => 'book',
+	 *   'title'  => 'Gifted Programmers',
+	 *   'author' => [ '_type' => 'author', 'name' => 'Xavier' ],
+	 *   'ownPageList' => [ ['_type'=>'page', 'text' => '...'] ]
+	 * ] );
 	 * </code>
 	 *
 	 * @param string|array $typeOrBeanArray   type or bean array to import
@@ -13954,8 +15079,8 @@ class DispenseHelper
 			if ( !isset( $typeOrBeanArray['_type'] ) ) {
 				$list = array();
 				foreach( $typeOrBeanArray as $beanArray ) {
-					if ( 
-						!( is_array( $beanArray ) 
+					if (
+						!( is_array( $beanArray )
 						&& isset( $beanArray['_type'] ) ) ) {
 						throw new RedException( 'Invalid Array Bean' );
 					}
@@ -13981,8 +15106,8 @@ class DispenseHelper
 
 		return $beanOrBeans;
 	}
-	
-	
+
+
 	/**
 	 * Takes a comma separated list of bean types
 	 * and dispenses these beans. For each type in the list
@@ -14046,7 +15171,7 @@ use RedBeanPHP\OODBBean as OODBBean;
  *
  * Dumps the contents of a bean in an array for
  * debugging purposes.
- * 
+ *
  * @file    RedBeanPHP/Util/Dump.php
  * @author  Gabor de Mooij and the RedBeanPHP Community
  * @license BSD/GPLv2
@@ -14150,18 +15275,11 @@ class MultiLoader
 	 */
 	public static function load( OODB $oodb, $types, $id )
 	{
-		if ( is_string( $types ) ) {
-			$types = explode( ',', $types );
-		}
-
-		if ( !is_array( $types ) ) {
-			return array();
-		}
-
+		if ( is_string( $types ) ) $types = explode( ',', $types );
+		if ( !is_array( $types ) ) return array();
 		foreach ( $types as $k => $typeItem ) {
 			$types[$k] = $oodb->load( $typeItem, $id );
 		}
-
 		return $types;
 	}
 }
@@ -14325,17 +15443,20 @@ class QuickExport
 
 	/**
 	 * Exposes the result of the specified SQL query as a CSV file.
+	 *
 	 * Usage:
 	 *
+	 * <code>
 	 * R::csv( 'SELECT
-	 *                 `name`,
-	 *                  population
-	 *          FROM city
-	 *          WHERE region = :region ',
-	 *          array( ':region' => 'Denmark' ),
-	 *          array( 'city', 'population' ),
-	 *          '/tmp/cities.csv'
+	 *   `name`,
+	 *   population
+	 *   FROM city
+	 *   WHERE region = :region ',
+	 *   array( ':region' => 'Denmark' ),
+	 *   array( 'city', 'population' ),
+	 *   '/tmp/cities.csv'
 	 * );
+	 * </code>
 	 *
 	 * The command above will select all cities in Denmark
 	 * and create a CSV with columns 'city' and 'population' and
@@ -14395,7 +15516,7 @@ use RedBeanPHP\Finder;
  * A matchUp is a match-and-update combination in terms of beans.
  * Typically login related problems are all about a match and
  * a conditional update.
- * 
+ *
  * @file    RedBeanPHP/Util/MatchUp.php
  * @author  Gabor de Mooij and the RedBeanPHP Community
  * @license BSD/GPLv2
@@ -14443,6 +15564,18 @@ class MatchUp
 	 *
 	 * To obtain the bean, pass a variable as the sixth parameter.
 	 * The function will put the matching bean in the specified variable.
+	 *
+	 * Usage (this example resets a password in one go):
+	 *
+	 * <code>
+	 * $newpass = '1234';
+	 * $didResetPass = R::matchUp(
+	 * 'account', ' token = ? AND tokentime > ? ',
+	 * [ $token, time()-100 ],
+	 * [ 'pass' => $newpass, 'token' => '' ],
+	 * NULL,
+	 * $account );
+	 * </code>
 	 *
 	 * @param string   $type         type of bean you're looking for
 	 * @param string   $sql          SQL snippet (starting at the WHERE clause, omit WHERE-keyword)
@@ -14498,7 +15631,7 @@ use RedBeanPHP\Finder;
  *
  * The Look Utility class provides an easy way to generate
  * tables and selects (pulldowns) from the database.
- * 
+ *
  * @file    RedBeanPHP/Util/Look.php
  * @author  Gabor de Mooij and the RedBeanPHP Community
  * @license BSD/GPLv2
@@ -14670,34 +15803,280 @@ class Diff
 	public function diff( $beans, $others, $filters = array( 'created', 'modified' ), $format = '%s.%s.%s', $type = NULL )
 	{
 		$diff = array();
+
 		if ( !is_array( $beans ) ) $beans = array( $beans );
-		if ( !is_array( $others ) ) $others = array( $others );
-		foreach( $beans as $bean ) {
-			if ( !is_object( $bean ) ) continue;
+		$beansI = array();
+		foreach ( $beans as $bean ) {
 			if ( !( $bean instanceof OODBBean ) ) continue;
-			if ( $type == NULL ) $type = $bean->getMeta( 'type' );
-			foreach( $others as $other ) {
-				if ( !is_object( $other ) ) continue;
-				if ( !( $other instanceof OODBBean ) ) continue;
-				if ( $other->id == $bean->id ) {
-					foreach( $bean as $property => $value ) {
-						if ( in_array( $property, $filters ) ) continue;
-						$key = vsprintf( $format, array( $type, $bean->id, $property ) );
-						$compare = $other->{$property};
-						if ( !is_object( $value ) && !is_array( $value ) ) {
-							if ( $value != $compare ) {
-								$diff[$key] = array( $value, $compare );
-							}
-							continue;
-						} else {
-							$diff = array_merge( $diff, $this->diff( $value, $compare, $filters, $format, $key ) );
-							continue;
-						}
-					}
+			$beansI[$bean->id] = $bean;
+		}
+
+		if ( !is_array( $others ) ) $others = array( $others );
+		$othersI = array();
+		foreach ( $others as $other ) {
+			if ( !( $other instanceof OODBBean ) ) continue;
+			$othersI[$other->id] = $other;
+		}
+
+		if ( count( $beansI ) == 0 || count( $othersI ) == 0 ) {
+			return array();
+		}
+
+		$type = $type != NULL ? $type : reset($beansI)->getMeta( 'type' );
+
+		foreach( $beansI as $id => $bean ) {
+			if ( !isset( $othersI[$id] ) ) continue;
+			$other = $othersI[$id];
+			foreach( $bean as $property => $value ) {
+				if ( in_array( $property, $filters ) ) continue;
+				$key = vsprintf( $format, array( $type, $bean->id, $property ) );
+				$compare = $other->{$property};
+				if ( !is_object( $value ) && !is_array( $value ) && $value != $compare ) {
+					$diff[$key] = array( $value, $compare );
+				} else {
+					$diff = array_merge( $diff, $this->diff( $value, $compare, $filters, $format, $key ) );
 				}
 			}
 		}
+
 		return $diff;
+	}
+}
+}
+
+namespace RedBeanPHP\Util {
+
+use RedBeanPHP\ToolBox;
+use RedBeanPHP\OODBBean;
+
+/**
+ * Tree
+ *
+ * Given a bean, finds it children or parents
+ * in a hierchical structure.
+ *
+ * @experimental feature
+ *
+ * @file    RedBeanPHP/Util/Tree.php
+ * @author  Gabor de Mooij and the RedBeanPHP Community
+ * @license BSD/GPLv2
+ *
+ * @copyright
+ * copyright (c) G.J.G.T. (Gabor) de Mooij and the RedBeanPHP Community
+ * This source file is subject to the BSD/GPLv2 License that is bundled
+ * with this source code in the file license.txt.
+ */
+class Tree {
+
+	/**
+	 * @var ToolBox
+	 */
+	protected $toolbox;
+
+	/**
+	 * @var QueryWriter
+	 */
+	protected $writer;
+
+	/**
+	 * @var OODB
+	 */
+	protected $oodb;
+
+	/**
+	 * Constructor, creates a new instance of
+	 * the Tree.
+	 *
+	 * @param ToolBox $toolbox toolbox
+	 */
+	public function __construct( ToolBox $toolbox )
+	{
+		$this->toolbox = $toolbox;
+		$this->writer  = $toolbox->getWriter();
+		$this->oodb    = $toolbox->getRedBean();
+	}
+
+	/**
+	 * Returns all child beans associates with the specified
+	 * bean in a tree structure.
+	 *
+	 * @note this only works for databases that support
+	 * recusrive common table expressions.
+	 * 
+	 * Usage:
+	 *
+	 * <code>
+	 * $newsArticles = R::children( $newsPage, ' ORDER BY title ASC ' ) 
+	 * $newsArticles = R::children( $newsPage, ' WHERE title = ? ', [ $t ] );
+	 * $newsArticles = R::children( $newsPage, ' WHERE title = :t ', [ ':t' => $t ] );
+	 * </code>
+	 *
+	 * Note:
+	 * You are allowed to use named parameter bindings as well as
+	 * numeric parameter bindings (using the question mark notation).
+	 * However, you can not mix. Also, if using named parameter bindings,
+	 * parameter binding key ':slot0' is reserved for the ID of the bean
+	 * and used in the query.
+	 *
+	 * @param OODBBean $bean     reference bean to find children of
+	 * @param string   $sql      optional SQL snippet
+	 * @param array    $bindings optional parameter bindings for SQL snippet
+	 *
+	 * @return array
+	 */
+	public function children( OODBBean $bean, $sql = NULL, $bindings = array() )
+	{
+		$type = $bean->getMeta('type');
+		$id   = $bean->id;
+
+		$rows = $this->writer->queryRecursiveCommonTableExpression( $type, $id, FALSE, $sql, $bindings );
+
+		return $this->oodb->convertToBeans( $type, $rows );
+	}
+
+	/**
+	 * Returns all parent beans associates with the specified
+	 * bean in a tree structure.
+	 *
+	 * @note this only works for databases that support
+	 * recusrive common table expressions.
+	 *
+	 * <code>
+	 * $newsPages = R::parents( $newsArticle, ' ORDER BY title ASC ' );
+	 * $newsPages = R::parents( $newsArticle, ' WHERE title = ? ', [ $t ] );
+	 * $newsPages = R::parents( $newsArticle, ' WHERE title = :t ', [ ':t' => $t ] );
+	 * </code>
+	 *
+	 * Note:
+	 * You are allowed to use named parameter bindings as well as
+	 * numeric parameter bindings (using the question mark notation).
+	 * However, you can not mix. Also, if using named parameter bindings,
+	 * parameter binding key ':slot0' is reserved for the ID of the bean
+	 * and used in the query.
+	 *
+	 * @param OODBBean $bean     reference bean to find parents of
+	 * @param string   $sql      optional SQL snippet
+	 * @param array    $bindings optional parameter bindings for SQL snippet
+	 *
+	 * @return array
+	 */
+	public function parents( OODBBean $bean, $sql = NULL, $bindings = array() )
+	{
+		$type = $bean->getMeta('type');
+		$id   = $bean->id;
+
+		$rows = $this->writer->queryRecursiveCommonTableExpression( $type, $id, TRUE, $sql, $bindings );
+
+		return $this->oodb->convertToBeans( $type, $rows );
+	}
+}
+}
+
+namespace RedBeanPHP\Util {
+use RedBeanPHP\Facade as R;
+use RedBeanPHP\OODBBean;
+
+/**
+ * Feature Utility
+ *
+ * The Feature Utility class provides an easy way to turn
+ * on or off features. This allows us to introduce new features
+ * without accidentally breaking backward compatibility.
+ *
+ * @file    RedBeanPHP/Util/Feature.php
+ * @author  Gabor de Mooij and the RedBeanPHP Community
+ * @license BSD/GPLv2
+ *
+ * @copyright
+ * copyright (c) G.J.G.T. (Gabor) de Mooij and the RedBeanPHP Community
+ * This source file is subject to the BSD/GPLv2 License that is bundled
+ * with this source code in the file license.txt.
+ */
+class Feature
+{
+	/* Feature set constants */
+	const C_FEATURE_NOVICE_LATEST = 'novice/latest';
+	const C_FEATURE_LATEST        = 'latest';
+	const C_FEATURE_NOVICE_5_4    = 'novice/5.4';
+	const C_FEATURE_5_4           = '5.4';
+	const C_FEATURE_NOVICE_5_3    = 'novice/5.3';
+	const C_FEATURE_5_3           = '5.3';
+	const C_FEATURE_ORIGINAL      = 'original';
+
+	/**
+	 * Selects the feature set you want as specified by
+	 * the label.
+	 *
+	 * Available labels:
+	 *
+	 * novice/latest:
+	 * - forbid R::nuke()
+	 * - enable automatic relation resolver based on foreign keys
+	 * - forbid R::store(All)( $bean, TRUE ) (Hybrid mode)
+	 * - use IS-NULL conditions in findLike() etc
+	 *
+	 * latest:
+	 * - allow R::nuke()
+	 * - enable auto resolve
+	 * - allow hybrid mode
+	 * - use IS-NULL conditions in findLike() etc
+	 *
+	 * novice/X or X:
+	 * - keep everything as it was in version X
+	 *
+	 * Usage:
+	 *
+	 * <code>
+	 * R::useFeatureSet( 'novice/latest' );
+	 * </code>
+	 *
+	 * @param string $label label
+	 *
+	 * @return void
+	 */
+	public static function feature( $label ) {
+		switch( $label ) {
+			case self::C_FEATURE_NOVICE_LATEST:
+			case self::C_FEATURE_NOVICE_5_4:
+				OODBBean::useFluidCount( FALSE );
+				R::noNuke( TRUE );
+				R::setAutoResolve( TRUE );
+				R::setAllowHybridMode( FALSE );
+				R::useISNULLConditions( TRUE );
+				break;
+			case self::C_FEATURE_LATEST:
+			case self::C_FEATURE_5_4:
+				OODBBean::useFluidCount( FALSE );
+				R::noNuke( FALSE );
+				R::setAutoResolve( TRUE );
+				R::setAllowHybridMode( TRUE );
+				R::useISNULLConditions( TRUE );
+				break;
+			case self::C_FEATURE_NOVICE_5_3:
+				OODBBean::useFluidCount( TRUE );
+				R::noNuke( TRUE );
+				R::setAutoResolve( TRUE );
+				R::setAllowHybridMode( FALSE );
+				R::useISNULLConditions( FALSE );
+				break;
+			case self::C_FEATURE_5_3:
+				OODBBean::useFluidCount( TRUE );
+				R::noNuke( FALSE );
+				R::setAutoResolve( TRUE );
+				R::setAllowHybridMode( FALSE );
+				R::useISNULLConditions( FALSE );
+				break;
+			case self::C_FEATURE_ORIGINAL:
+				OODBBean::useFluidCount( TRUE );
+				R::noNuke( FALSE );
+				R::setAutoResolve( FALSE );
+				R::setAllowHybridMode( FALSE );
+				R::useISNULLConditions( FALSE );
+				break;
+			default:
+				throw new \Exception("Unknown feature set label.");
+				break;
+		}
 	}
 }
 }
